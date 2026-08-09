@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added repository-root-aware Git snapshot, diff, stage, and guarded discard commands for RPC UI hosts.
+
+### Fixed
+
+- Treated RPC UI file selections as literal Git pathspecs so special filenames cannot expand destructive operations.
+
 ## [17.2.11] - 2026-08-07
 
 ### Added

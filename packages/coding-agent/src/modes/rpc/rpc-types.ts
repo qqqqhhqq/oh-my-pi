@@ -19,6 +19,7 @@ import type {
 	SubagentProgressPayload,
 } from "../../task";
 import type { TodoPhase } from "../../tools/todo";
+import type { RpcGitSnapshot } from "./rpc-git";
 import type { RpcMessagesPage } from "./rpc-messages";
 
 // ============================================================================
@@ -73,6 +74,12 @@ export type RpcCommand =
 	// Bash
 	| { id?: string; type: "bash"; command: string }
 	| { id?: string; type: "abort_bash" }
+
+	// Git
+	| { id?: string; type: "get_git_snapshot" }
+	| { id?: string; type: "get_git_diff"; path: string }
+	| { id?: string; type: "stage_git_changes"; paths?: string[] }
+	| { id?: string; type: "discard_git_changes"; paths: string[] }
 
 	// Session
 	| { id?: string; type: "get_session_stats" }
@@ -301,6 +308,12 @@ export type RpcResponse =
 	// Bash
 	| { id?: string; type: "response"; command: "bash"; success: true; data: BashResult }
 	| { id?: string; type: "response"; command: "abort_bash"; success: true }
+
+	// Git
+	| { id?: string; type: "response"; command: "get_git_snapshot"; success: true; data: RpcGitSnapshot }
+	| { id?: string; type: "response"; command: "get_git_diff"; success: true; data: { path: string; diff: string } }
+	| { id?: string; type: "response"; command: "stage_git_changes"; success: true; data: RpcGitSnapshot }
+	| { id?: string; type: "response"; command: "discard_git_changes"; success: true; data: RpcGitSnapshot }
 
 	// Session
 	| { id?: string; type: "response"; command: "get_session_stats"; success: true; data: SessionStats }

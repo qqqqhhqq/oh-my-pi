@@ -37,6 +37,7 @@ import { initializeExtensions } from "../runtime-init";
 import { isRpcHostToolResult, isRpcHostToolUpdate, RpcHostToolBridge } from "./host-tools";
 import { isRpcHostUriResult, RpcHostUriBridge } from "./host-uris";
 import { MAX_RPC_FRAME_BYTES, MAX_RPC_REASSEMBLED_BYTES, RpcFrameEncoder } from "./rpc-frame";
+import { discardRpcGitChanges, getRpcGitDiff, getRpcGitSnapshot, stageRpcGitChanges } from "./rpc-git";
 import { claimRpcInput } from "./rpc-input";
 import { pageRpcMessages, RPC_MESSAGES_PAGE_BUSY_ERROR, RpcMessagesPageError } from "./rpc-messages";
 import { RpcSubagentRegistry, readRpcSubagentTranscript } from "./rpc-subagents";
@@ -1292,6 +1293,29 @@ export async function runRpcMode(
 			case "abort_bash": {
 				session.abortBash();
 				return success(id, "abort_bash");
+			}
+
+			// =================================================================
+			// Git
+			// =================================================================
+
+			case "get_git_snapshot": {
+				return success(id, "get_git_snapshot", await getRpcGitSnapshot(process.cwd()));
+			}
+
+			case "get_git_diff": {
+				return success(id, "get_git_diff", {
+					path: command.path,
+					diff: await getRpcGitDiff(process.cwd(), command.path),
+				});
+			}
+
+			case "stage_git_changes": {
+				return success(id, "stage_git_changes", await stageRpcGitChanges(process.cwd(), command.paths));
+			}
+
+			case "discard_git_changes": {
+				return success(id, "discard_git_changes", await discardRpcGitChanges(process.cwd(), command.paths));
 			}
 
 			// =================================================================

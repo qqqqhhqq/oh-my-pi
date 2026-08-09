@@ -88,6 +88,44 @@ describe("git subprocess config", () => {
 		]);
 	});
 
+	it("places literal pathspec mode before file-scoped Git subcommands", async () => {
+		const spawnCalls: SpawnCall[] = [];
+		vi.spyOn(Bun, "spawn").mockImplementation(createSpawnMock(spawnCalls));
+
+		await git.stage.files("/work/pi", [":(glob)**"], undefined, { literalPathspecs: true });
+		await git.diff("/work/pi", { files: [":(glob)**"], literalPathspecs: true });
+		await git.restore("/work/pi", {
+			files: [":(glob)**"],
+			literalPathspecs: true,
+			staged: true,
+			worktree: true,
+		});
+		await git.diff("/work/pi", {
+			allowFailure: true,
+			literalPathspecs: true,
+			noIndex: { left: "/dev/null", right: "-dash.txt" },
+		});
+
+		expect(spawnCalls[0]?.cmd.slice(5)).toEqual(["--literal-pathspecs", "add", "--", ":(glob)**"]);
+		expect(spawnCalls[1]?.cmd.slice(6)).toEqual(["--literal-pathspecs", "diff", "--", ":(glob)**"]);
+		expect(spawnCalls[2]?.cmd.slice(5)).toEqual([
+			"--literal-pathspecs",
+			"restore",
+			"--staged",
+			"--worktree",
+			"--",
+			":(glob)**",
+		]);
+		expect(spawnCalls[3]?.cmd.slice(6)).toEqual([
+			"--literal-pathspecs",
+			"diff",
+			"--no-index",
+			"--",
+			"/dev/null",
+			"-dash.txt",
+		]);
+	});
+
 	it("scopes pushes to the named refspec, never following tags", async () => {
 		const spawnCalls: SpawnCall[] = [];
 		vi.spyOn(Bun, "spawn").mockImplementation(createSpawnMock(spawnCalls));

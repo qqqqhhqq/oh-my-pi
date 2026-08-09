@@ -426,14 +426,17 @@ function createCommandHarness(
 		const branch = result.stdout.trim();
 		return branch.length > 0 ? branch : null;
 	});
-	const mockStatus = Object.assign(
-		async (_cwd: string) => {
-			const result = await runGitMock(["status", "--porcelain=v1", "--untracked-files=all", "-z"]);
-			if (result.code !== 0) throw new Error(result.stderr || "git status failed");
-			return result.stdout;
-		},
-		{ parse: git.status.parse, summary: git.status.summary },
-	);
+	const readStatus = async (_cwd: string) => {
+		const result = await runGitMock(["status", "--porcelain=v1", "--untracked-files=all", "-z"]);
+		if (result.code !== 0) throw new Error(result.stderr || "git status failed");
+		return result.stdout;
+	};
+	const mockStatus = Object.assign(readStatus, {
+		parse: git.status.parse,
+		parseEntries: git.status.parseEntries,
+		summary: git.status.summary,
+		entries: async (cwd: string) => git.status.parseEntries(await readStatus(cwd)),
+	});
 	vi.spyOn(git, "status").mockImplementation(mockStatus);
 	vi.spyOn(git.ref, "exists").mockImplementation(async (_workDir, refName) => {
 		const result = await runGitMock(["show-ref", "--verify", "--quiet", refName]);

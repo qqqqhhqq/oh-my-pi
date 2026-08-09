@@ -37,6 +37,16 @@ export interface GitStatusSummary {
 	untracked: number;
 }
 
+export type GitStatusEntryKind = "added" | "copied" | "deleted" | "modified" | "renamed" | "untracked" | "conflicted";
+
+export interface GitStatusEntry {
+	path: string;
+	originalPath?: string;
+	indexStatus: string;
+	worktreeStatus: string;
+	kind: GitStatusEntryKind;
+}
+
 export type HunkSelection = {
 	path: string;
 	hunks: { type: "all" } | { type: "indices"; indices: number[] } | { type: "lines"; start: number; end: number };
@@ -60,6 +70,7 @@ export interface DiffOptions {
 	readonly env?: Record<string, string | undefined>;
 	readonly files?: readonly string[];
 	readonly head?: string;
+	readonly literalPathspecs?: boolean;
 	readonly nameOnly?: boolean;
 	readonly noIndex?: { left: string; right: string };
 	readonly numstat?: boolean;
@@ -111,6 +122,7 @@ export interface PatchOptions {
 
 export interface RestoreOptions {
 	readonly files?: readonly string[];
+	readonly literalPathspecs?: boolean;
 	readonly signal?: AbortSignal;
 	readonly source?: string;
 	readonly staged?: boolean;
@@ -616,14 +628,14 @@ function trimScalar(text: string | undefined): string | undefined {
 // ════════════════════════════════════════════════════════════════════════════
 
 function buildDiffArgs(options: DiffOptions): string[] {
-	const args = ["diff"];
+	const args = options.literalPathspecs ? ["--literal-pathspecs", "diff"] : ["diff"];
 	if (options.binary) args.push("--binary");
 	if (options.cached) args.push("--cached");
 	if (options.nameOnly) args.push("--name-only");
 	if (options.stat) args.push("--stat");
 	if (options.numstat) args.push("--numstat");
 	if (options.noIndex) {
-		args.push("--no-index", options.noIndex.left, options.noIndex.right);
+		args.push("--no-index", "--", options.noIndex.left, options.noIndex.right);
 		return args;
 	}
 	if (options.base) {
@@ -1223,6 +1235,43 @@ function parseStatusPorcelain(text: string): GitStatusSummary {
 	return { staged, unstaged, untracked };
 }
 
+function statusEntryKind(indexStatus: string, worktreeStatus: string): GitStatusEntryKind {
+	if (indexStatus === "?" && worktreeStatus === "?") return "untracked";
+	const combinedStatus = `${indexStatus}${worktreeStatus}`;
+	if (indexStatus === "U" || worktreeStatus === "U" || combinedStatus === "AA" || combinedStatus === "DD") {
+		return "conflicted";
+	}
+	if (indexStatus === "R" || worktreeStatus === "R") return "renamed";
+	if (indexStatus === "C" || worktreeStatus === "C") return "copied";
+	if (indexStatus === "D" || worktreeStatus === "D") return "deleted";
+	if (indexStatus === "A" || worktreeStatus === "A") return "added";
+	return "modified";
+}
+
+function parseStatusEntries(text: string): GitStatusEntry[] {
+	const fields = text.split("\0");
+	const entries: GitStatusEntry[] = [];
+	for (let index = 0; index < fields.length; index += 1) {
+		const field = fields[index];
+		if (!field || field.length < 4) continue;
+		const indexStatus = field[0] ?? " ";
+		const worktreeStatus = field[1] ?? " ";
+		const entry: GitStatusEntry = {
+			path: field.slice(3),
+			indexStatus,
+			worktreeStatus,
+			kind: statusEntryKind(indexStatus, worktreeStatus),
+		};
+		if (indexStatus === "R" || indexStatus === "C" || worktreeStatus === "R" || worktreeStatus === "C") {
+			const originalPath = fields[index + 1];
+			if (originalPath) entry.originalPath = originalPath;
+			index += 1;
+		}
+		entries.push(entry);
+	}
+	return entries;
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // API: diff
 // ════════════════════════════════════════════════════════════════════════════
@@ -1316,8 +1365,14 @@ export const status = Object.assign(
 			if (result.exitCode !== 0) return null;
 			return parseStatusPorcelain(result.stdout);
 		},
+		/** Structured NUL-delimited status entries with lossless paths. */
+		async entries(cwd: string, signal?: AbortSignal): Promise<GitStatusEntry[]> {
+			return parseStatusEntries(await status(cwd, { porcelainV1: true, untrackedFiles: "all", z: true, signal }));
+		},
 		/** Parse porcelain status text into counts. */
 		parse: parseStatusPorcelain,
+		/** Parse porcelain v1 `-z` text into structured entries. */
+		parseEntries: parseStatusEntries,
 	},
 );
 
@@ -1327,8 +1382,14 @@ export const status = Object.assign(
 
 export const stage = {
 	/** Stage files. Empty array stages all (`git add -A`). */
-	async files(cwd: string, files: readonly string[] = [], signal?: AbortSignal): Promise<void> {
-		const args = files.length === 0 ? ["add", "-A"] : ["add", "--", ...files];
+	async files(
+		cwd: string,
+		files: readonly string[] = [],
+		signal?: AbortSignal,
+		options: { literalPathspecs?: boolean } = {},
+	): Promise<void> {
+		const command = files.length === 0 ? ["add", "-A"] : ["add", "--", ...files];
+		const args = options.literalPathspecs ? ["--literal-pathspecs", ...command] : command;
 		await runEffect(cwd, args, { signal });
 	},
 
@@ -2169,7 +2230,7 @@ export async function clone(url: string, targetDir: string, options: CloneOption
 }
 
 export async function restore(cwd: string, options: RestoreOptions = {}): Promise<void> {
-	const args = ["restore"];
+	const args = options.literalPathspecs ? ["--literal-pathspecs", "restore"] : ["restore"];
 	if (options.source) args.push(`--source=${options.source}`);
 	if (options.staged) args.push("--staged");
 	if (options.worktree) args.push("--worktree");
