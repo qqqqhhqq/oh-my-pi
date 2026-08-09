@@ -83,6 +83,40 @@ eval "$(omp completions bash)"
 omp completions fish > ~/.config/fish/completions/omp.fish
 ```
 
+## OMP Desktop
+
+OMP Desktop is the cross-platform desktop task center for the OMP coding agent. It keeps projects and sessions together, opens tasks in a Codex-style composer, preserves the local project context, and groups each turn's tool calls into expandable execution steps.
+
+The desktop client lives in [`packages/desktop`](packages/desktop). It uses the same OMP RPC backend as the CLI, so the CLI and desktop share the same provider, model, tool, and session capabilities.
+
+### Run from source
+
+```sh
+cd packages/desktop
+bun install
+bun run dev
+```
+
+To launch the native desktop shell during development:
+
+```sh
+bun run tauri dev
+```
+
+### Build a Windows executable
+
+From `packages/desktop`:
+
+```sh
+bun run build:native
+```
+
+The generated executable is written to `target/release/omp-desktop.exe`. Windows installers can be produced with:
+
+```sh
+bun run bundle
+```
+
 ## Every tool, _benchmaxxed_.
 
 Edits that land on the first attempt. Reads that summarize files instead of dumping their content. Searches that return instantly. Pick any model — omp will get it right.

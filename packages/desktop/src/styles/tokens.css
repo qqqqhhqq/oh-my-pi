@@ -1,0 +1,32 @@
+:root {
+	color-scheme: dark;
+	--omp-bg-canvas: #111315;
+	--omp-bg-rail: #151719;
+	--omp-bg-surface: #1c1f22;
+	--omp-bg-surface-hover: #252a30;
+	--omp-bg-elevated: #31363f;
+	--omp-bg-code: #131619;
+	--omp-border-subtle: #2b3036;
+	--omp-border: #3c434b;
+	--omp-border-strong: #178fb9;
+	--omp-text: #e7ebf0;
+	--omp-text-soft: #c6cbd2;
+	--omp-text-muted: #777d88;
+	--omp-text-faint: #5f6673;
+	--omp-cyan: #0088fa;
+	--omp-cyan-bright: #18a5ff;
+	--omp-cyan-soft: #102e49;
+	--omp-cyan-faint: rgb(0 136 250 / 10%);
+	--omp-amber: #febc38;
+	--omp-amber-soft: rgb(254 188 56 / 10%);
+	--omp-success: #89d281;
+	--omp-danger: #fc3a4b;
+	--omp-purple: #b281d6;
+	--omp-pink: #ff5cc8;
+	--omp-shadow: 0 18px 55px rgb(0 0 0 / 22%);
+	--omp-radius-sm: 7px;
+	--omp-radius-md: 10px;
+	--omp-radius-lg: 14px;
+	--omp-font-ui: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+	--omp-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
