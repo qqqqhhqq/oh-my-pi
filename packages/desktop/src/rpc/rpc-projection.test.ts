@@ -75,6 +75,66 @@ describe("RPC conversation projection", () => {
 		expect(complete[0]).toMatchObject({ status: "complete", body: "M package.json" });
 	});
 
+	test("keeps one assistant entry and one stable tool entry across streaming updates", () => {
+		const started = projectAgentEvent([], {
+			type: "message_start",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "Inspecting" }],
+				model: "gpt-5.2-codex",
+				timestamp: 200,
+			},
+		});
+		const updatedAssistant = projectAgentEvent(started, {
+			type: "message_update",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "Inspecting README.md" }],
+				model: "gpt-5.2-codex",
+				timestamp: 200,
+			},
+		});
+		const toolRunning = projectAgentEvent(updatedAssistant, {
+			type: "tool_execution_start",
+			toolCallId: "call-3",
+			toolName: "read",
+			args: { path: "README.md" },
+			intent: "Inspect docs",
+		});
+		const toolStreaming = projectAgentEvent(toolRunning, {
+			type: "tool_execution_update",
+			toolCallId: "call-3",
+			toolName: "read",
+			args: { path: "README.md" },
+			partialResult: { bytes: 12 },
+		});
+		const finished = projectAgentEvent(toolStreaming, {
+			type: "tool_execution_end",
+			toolCallId: "call-3",
+			toolName: "read",
+			result: { content: [{ type: "text", text: "README contents" }] },
+			isError: false,
+		});
+
+		expect(finished.filter(entry => entry.kind === "assistant")).toHaveLength(1);
+		expect(finished.filter(entry => entry.kind === "tool")).toHaveLength(1);
+		expect(finished[0]).toMatchObject({
+			id: "assistant-200-0",
+			kind: "assistant",
+			body: "Inspecting README.md",
+			status: "running",
+		});
+		expect(finished[1]).toMatchObject({
+			id: "tool-call-3",
+			kind: "tool",
+			toolCallId: "call-3",
+			toolArgs: '{\n  "path": "README.md"\n}',
+			toolResult: "README contents",
+			status: "complete",
+			meta: "completed",
+		});
+	});
+
 	test("assigns sequential tool calls to the active agent turn", () => {
 		const turn = projectAgentEvent([], { type: "turn_start", id: "turn-1" });
 		const first = projectAgentEvent(turn, {

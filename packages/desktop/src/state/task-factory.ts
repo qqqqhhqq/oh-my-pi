@@ -4,19 +4,21 @@ import { workspaceName } from "./project-factory";
 
 export interface DesktopTaskDraft {
 	projectId: string;
-	title: string;
+	title?: string;
 	cwd: string;
-	executable?: string;
 	provider?: string;
 	model?: string;
+	approvalMode?: "always-ask" | "write" | "yolo";
+	thinking?: DesktopTask["thinking"];
 }
 
 function launchConfig(draft: DesktopTaskDraft): RpcLaunchConfig {
 	return {
 		cwd: draft.cwd,
-		...(draft.executable ? { executable: draft.executable } : {}),
 		...(draft.provider ? { provider: draft.provider } : {}),
 		...(draft.model ? { model: draft.model } : {}),
+		...(draft.approvalMode ? { approvalMode: draft.approvalMode } : {}),
+		...(draft.thinking ? { thinking: draft.thinking } : {}),
 	};
 }
 
@@ -30,7 +32,8 @@ export function createDesktopTask(draft: DesktopTaskDraft, id: string, now: numb
 		status: "waiting",
 		mode: "direct",
 		model: draft.model ?? "CLI default",
-		thinking: "high",
+		approvalMode: draft.approvalMode,
+		thinking: draft.thinking ?? "high",
 		cwd: draft.cwd,
 		branch: "workspace",
 		elapsed: "—",

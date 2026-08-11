@@ -16,12 +16,14 @@ export interface PersistedDesktopTask {
 	title: string;
 	mode: DesktopTask["mode"];
 	model: string;
+	approvalMode?: "always-ask" | "write" | "yolo";
 	thinking: DesktopTask["thinking"];
 	cwd: string;
 	branch: string;
 	archived: boolean;
 	lastOpenedAt: number;
 	launchConfig: RpcLaunchConfig;
+	favorite?: boolean;
 	sessionPath?: string;
 }
 
@@ -40,6 +42,10 @@ function optionalString(value: unknown): value is string | undefined {
 	return value === undefined || typeof value === "string";
 }
 
+function optionalBoolean(value: unknown): value is boolean | undefined {
+	return value === undefined || typeof value === "boolean";
+}
+
 function nonEmptyString(value: unknown): value is string {
 	return typeof value === "string" && value.trim().length > 0;
 }
@@ -47,18 +53,29 @@ function nonEmptyString(value: unknown): value is string {
 function launchConfig(value: unknown): RpcLaunchConfig | undefined {
 	if (!isRecord(value) || typeof value.cwd !== "string") return undefined;
 	if (
-		!optionalString(value.executable) ||
 		!optionalString(value.provider) ||
 		!optionalString(value.model) ||
-		!optionalString(value.sessionDir)
+		!optionalString(value.sessionDir) ||
+		!optionalString(value.approvalMode) ||
+		!optionalString(value.thinking)
+	) {
+		return undefined;
+	}
+	const approvalMode = value.approvalMode;
+	if (
+		approvalMode !== undefined &&
+		approvalMode !== "always-ask" &&
+		approvalMode !== "write" &&
+		approvalMode !== "yolo"
 	) {
 		return undefined;
 	}
 	return {
 		cwd: value.cwd,
-		executable: value.executable,
 		provider: value.provider,
 		model: value.model,
+		approvalMode,
+		thinking: value.thinking,
 		sessionDir: value.sessionDir,
 	};
 }
@@ -79,15 +96,26 @@ function persistedTask(value: unknown, requireProjectId: boolean): PersistedDesk
 			value.thinking !== "medium" &&
 			value.thinking !== "high" &&
 			value.thinking !== "xhigh" &&
-			value.thinking !== "max") ||
+			value.thinking !== "max" &&
+			value.thinking !== "auto") ||
 		!nonEmptyString(value.cwd) ||
 		!nonEmptyString(value.branch) ||
 		typeof value.archived !== "boolean" ||
 		typeof value.lastOpenedAt !== "number" ||
 		!Number.isFinite(value.lastOpenedAt) ||
+		!optionalBoolean(value.favorite) ||
 		!config ||
 		config.cwd !== value.cwd ||
 		!optionalString(value.sessionPath)
+	) {
+		return undefined;
+	}
+	const approvalMode = value.approvalMode;
+	if (
+		approvalMode !== undefined &&
+		approvalMode !== "always-ask" &&
+		approvalMode !== "write" &&
+		approvalMode !== "yolo"
 	) {
 		return undefined;
 	}
@@ -98,12 +126,14 @@ function persistedTask(value: unknown, requireProjectId: boolean): PersistedDesk
 		title: value.title,
 		mode: value.mode,
 		model: value.model,
+		approvalMode,
 		thinking: value.thinking,
 		cwd: value.cwd,
 		branch: value.branch,
 		archived: value.archived,
 		lastOpenedAt: value.lastOpenedAt,
 		launchConfig: config,
+		favorite: value.favorite,
 		sessionPath: value.sessionPath,
 	};
 }
@@ -203,12 +233,14 @@ export function saveTaskCatalog(
 		title: task.title,
 		mode: task.mode,
 		model: task.model,
+		approvalMode: task.approvalMode,
 		thinking: task.thinking,
 		cwd: task.cwd,
 		branch: task.branch,
 		archived: task.archived,
 		lastOpenedAt: task.lastOpenedAt,
 		launchConfig: task.launchConfig,
+		favorite: task.favorite,
 		sessionPath: task.sessionPath,
 	}));
 	storage.setItem(TASK_CATALOG_KEY, JSON.stringify({ version: 2, tasks: persisted, projects }));

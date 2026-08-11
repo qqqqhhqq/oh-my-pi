@@ -36,7 +36,6 @@ function task(overrides: Partial<DesktopTask> = {}): DesktopTask {
 		lastOpenedAt: 1_786_204_000_000,
 		launchConfig: {
 			cwd: "C:/workspace/oh-my-pi",
-			executable: "omp",
 			provider: "openai",
 			model: "gpt-5.2-codex",
 		},
@@ -78,7 +77,6 @@ describe("desktop task catalog", () => {
 				lastOpenedAt: 1_786_204_000_000,
 				launchConfig: {
 					cwd: "C:/workspace/oh-my-pi",
-					executable: "omp",
 					provider: "openai",
 					model: "gpt-5.2-codex",
 				},
@@ -86,6 +84,16 @@ describe("desktop task catalog", () => {
 			},
 		]);
 		expect(loaded.projects).toEqual([project()]);
+	});
+
+	test("persists and restores the favorite flag", () => {
+		const storage = new MemoryStorage();
+		saveTaskCatalog(storage, [task({ favorite: true })], [project()]);
+
+		const loaded = loadTaskCatalog(storage);
+		expect(loaded.kind).toBe("loaded");
+		if (loaded.kind !== "loaded") throw new Error("catalog should load");
+		expect(loaded.tasks[0]?.favorite).toBe(true);
 	});
 
 	test("rejects corrupt catalog data without overwriting the original value", () => {
@@ -117,7 +125,7 @@ describe("desktop task catalog", () => {
 			storage,
 			[
 				task({
-					launchConfig: { cwd: "C:/workspace/a-different-repository", executable: "omp" },
+					launchConfig: { cwd: "C:/workspace/a-different-repository" },
 				}),
 			],
 			[project()],

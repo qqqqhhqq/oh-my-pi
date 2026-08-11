@@ -307,6 +307,27 @@ describe("DesktopRpcSession", () => {
 		await expect(pending).resolves.toMatchObject({ success: true, command: "prompt" });
 	});
 
+	test("can steer a prompt while the agent is streaming", async () => {
+		const bridge = new FakeBridge();
+		const session = new DesktopRpcSession("task-1", bridge, () => {});
+		await session.connect({ cwd: "C:/workspace" });
+
+		const pending = session.steer("Stop editing this file and inspect the failing test");
+		const command = JSON.parse(bridge.frames.at(-1) ?? "{}") as { id: string; type: string; message: string };
+		expect(command).toMatchObject({
+			type: "steer",
+			message: "Stop editing this file and inspect the failing test",
+		});
+		bridge.emit("task-1", {
+			id: command.id,
+			type: "response",
+			command: "steer",
+			success: true,
+		});
+
+		await expect(pending).resolves.toMatchObject({ success: true, command: "steer" });
+	});
+
 	test("ignores frames emitted for another task", async () => {
 		const bridge = new FakeBridge();
 		const events: string[] = [];

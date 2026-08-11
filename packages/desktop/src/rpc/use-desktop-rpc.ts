@@ -13,7 +13,6 @@ import { type DesktopRuntimeInfo, getDesktopRuntimeInfo, TauriRpcBridge } from "
 const browserRuntimeInfo: DesktopRuntimeInfo = {
 	available: false,
 	defaultWorkspace: "",
-	defaultExecutable: "",
 };
 
 function dispatchRpcEvent(dispatch: Dispatch<DesktopAction>, taskId: string, event: DesktopRpcEvent): void {
@@ -124,10 +123,31 @@ export function useDesktopRpc(dispatch: Dispatch<DesktopAction>) {
 		if (!response.success) throw new Error(response.error);
 	}
 
+	async function steer(taskId: string, message: string): Promise<void> {
+		const session = sessions.current.get(taskId);
+		if (!session) throw new Error("Connect this task to OMP before steering a prompt");
+		const response = await session.steer(message);
+		if (!response.success) throw new Error(response.error);
+	}
+
+	async function followUp(taskId: string, message: string): Promise<void> {
+		const session = sessions.current.get(taskId);
+		if (!session) throw new Error("Connect this task to OMP before queuing a follow-up");
+		const response = await session.followUp(message);
+		if (!response.success) throw new Error(response.error);
+	}
+
 	async function abort(taskId: string): Promise<void> {
 		const session = sessions.current.get(taskId);
 		if (!session) return;
 		const response = await session.abort();
+		if (!response.success) throw new Error(response.error);
+	}
+
+	async function abortAndPrompt(taskId: string, message: string): Promise<void> {
+		const session = sessions.current.get(taskId);
+		if (!session) throw new Error("Connect this task to OMP before replacing the current prompt");
+		const response = await session.abortAndPrompt(message);
 		if (!response.success) throw new Error(response.error);
 	}
 
@@ -195,12 +215,35 @@ export function useDesktopRpc(dispatch: Dispatch<DesktopAction>) {
 		}
 	}
 
+	async function getAvailableModels(taskId: string) {
+		const session = sessions.current.get(taskId);
+		if (!session) throw new Error("Connect this task to OMP before listing models");
+		return session.getAvailableModels();
+	}
+
+	async function setModel(taskId: string, provider: string, modelId: string): Promise<void> {
+		const session = sessions.current.get(taskId);
+		if (!session) throw new Error("Connect this task to OMP before switching models");
+		await session.setModel(provider, modelId);
+		await session.refresh();
+	}
+
+	async function setThinkingLevel(taskId: string, level: string): Promise<void> {
+		const session = sessions.current.get(taskId);
+		if (!session) throw new Error("Connect this task to OMP before setting thinking level");
+		await session.setThinkingLevel(level);
+		await session.refresh();
+	}
+
 	return {
 		runtimeInfo,
 		uiRequests,
 		connect,
 		prompt,
+		steer,
+		followUp,
 		abort,
+		abortAndPrompt,
 		refresh,
 		respondToUi,
 		disconnect,
@@ -208,5 +251,8 @@ export function useDesktopRpc(dispatch: Dispatch<DesktopAction>) {
 		loadGitDiff,
 		stageGitChanges,
 		discardGitChanges,
+		getAvailableModels,
+		setModel,
+		setThinkingLevel,
 	};
 }

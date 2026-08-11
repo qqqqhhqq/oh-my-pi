@@ -2,16 +2,22 @@ import { MAX_RPC_FRAME_BYTES, MAX_RPC_REASSEMBLED_BYTES, RpcFrameDecoder } from 
 
 export interface RpcLaunchConfig {
 	cwd: string;
-	executable?: string;
 	provider?: string;
 	model?: string;
+	/** Session approval mode; `always-ask` = annotate every step, `write` = approve edits, `yolo` = autonomous. */
+	approvalMode?: "always-ask" | "write" | "yolo";
+	/** Starting thinking level selector (`off`, `auto`, `minimal`..`max`). */
+	thinking?: string;
 	sessionDir?: string;
 }
 
 export type RpcCommand =
 	| { type: "negotiate_protocol"; protocolVersion: 2 }
 	| { type: "prompt"; message: string }
+	| { type: "steer"; message: string }
+	| { type: "follow_up"; message: string }
 	| { type: "abort" }
+	| { type: "abort_and_prompt"; message: string }
 	| { type: "bash"; command: string }
 	| { type: "get_state" }
 	| { type: "get_messages" }
@@ -21,7 +27,10 @@ export type RpcCommand =
 	| { type: "get_git_snapshot" }
 	| { type: "get_git_diff"; path: string }
 	| { type: "stage_git_changes"; paths?: string[] }
-	| { type: "discard_git_changes"; paths: string[] };
+	| { type: "discard_git_changes"; paths: string[] }
+	| { type: "get_available_models" }
+	| { type: "set_model"; provider: string; modelId: string }
+	| { type: "set_thinking_level"; level: string };
 
 export type RpcGitChangeKind = "added" | "copied" | "deleted" | "modified" | "renamed" | "untracked" | "conflicted";
 
@@ -41,17 +50,25 @@ export interface RpcGitSnapshot {
 	entries: RpcGitChange[];
 }
 
+export interface RpcModelInfo {
+	provider: string;
+	id: string;
+	contextWindow: number | null;
+	reasoning: boolean;
+	thinking?: { mode: string; efforts?: string[] } | null;
+}
+
 export type RpcResponse =
 	| { id?: string; type: "response"; command: string; success: true; data?: unknown }
 	| { id?: string; type: "response"; command: string; success: false; error: string; code?: string };
 
 export interface RpcSessionState {
-	model?: { id: string };
+	model?: { id: string; cost?: { input: number; output: number; cacheRead: number } };
 	thinkingLevel?: string;
 	isStreaming: boolean;
 	sessionId: string;
 	sessionFile?: string;
-	contextUsage?: { percent: number };
+	contextUsage?: { percent: number; tokens?: number; contextWindow?: number };
 }
 
 export type RpcAgentEventType =
@@ -206,10 +223,28 @@ function sessionState(value: unknown): RpcSessionState | undefined {
 	if (!isRecord(value) || typeof value.isStreaming !== "boolean" || typeof value.sessionId !== "string") {
 		return undefined;
 	}
-	const model = isRecord(value.model) && typeof value.model.id === "string" ? { id: value.model.id } : undefined;
+	const modelValue = isRecord(value.model) ? value.model : undefined;
+	const model: { id: string; cost?: { input: number; output: number; cacheRead: number } } | undefined =
+		modelValue !== undefined && typeof modelValue.id === "string" ? { id: modelValue.id } : undefined;
+	if (model && modelValue) {
+		const cost = modelValue.cost;
+		if (isRecord(cost)) {
+			const input = typeof cost.input === "number" ? cost.input : undefined;
+			const output = typeof cost.output === "number" ? cost.output : undefined;
+			const cacheRead = typeof cost.cacheRead === "number" ? cost.cacheRead : undefined;
+			if (input !== undefined || output !== undefined || cacheRead !== undefined) {
+				model.cost = { input: input ?? 0, output: output ?? 0, cacheRead: cacheRead ?? 0 };
+			}
+		}
+	}
 	const contextUsage =
 		isRecord(value.contextUsage) && typeof value.contextUsage.percent === "number"
-			? { percent: value.contextUsage.percent }
+			? {
+					percent: value.contextUsage.percent,
+					tokens: typeof value.contextUsage.tokens === "number" ? value.contextUsage.tokens : undefined,
+					contextWindow:
+						typeof value.contextUsage.contextWindow === "number" ? value.contextUsage.contextWindow : undefined,
+				}
 			: undefined;
 	return {
 		model,
@@ -422,8 +457,20 @@ export class DesktopRpcSession {
 		return this.command({ type: "prompt", message });
 	}
 
+	async steer(message: string): Promise<RpcResponse> {
+		return this.command({ type: "steer", message });
+	}
+
+	async followUp(message: string): Promise<RpcResponse> {
+		return this.command({ type: "follow_up", message });
+	}
+
 	async abort(): Promise<RpcResponse> {
 		return this.command({ type: "abort" });
+	}
+
+	async abortAndPrompt(message: string): Promise<RpcResponse> {
+		return this.command({ type: "abort_and_prompt", message });
 	}
 
 	async bash(command: string): Promise<RpcResponse> {
@@ -446,6 +493,41 @@ export class DesktopRpcSession {
 			this.onEvent({ type: "git_error", message: errorMessage(error) });
 			return undefined;
 		}
+	}
+
+	async getAvailableModels(): Promise<RpcModelInfo[]> {
+		const response = await this.command({ type: "get_available_models" });
+		if (!response.success) throw new Error(response.error);
+		if (
+			response.command !== "get_available_models" ||
+			!isRecord(response.data) ||
+			!Array.isArray(response.data.models)
+		) {
+			throw new Error("OMP returned an invalid model list");
+		}
+		return response.data.models.flatMap(model => {
+			if (!isRecord(model) || typeof model.provider !== "string" || typeof model.id !== "string") {
+				return [];
+			}
+			return [
+				{
+					provider: model.provider,
+					id: model.id,
+					contextWindow: typeof model.contextWindow === "number" ? model.contextWindow : null,
+					reasoning: model.reasoning === true,
+				},
+			];
+		});
+	}
+
+	async setModel(provider: string, modelId: string): Promise<void> {
+		const response = await this.command({ type: "set_model", provider, modelId });
+		if (!response.success) throw new Error(response.error);
+	}
+
+	async setThinkingLevel(level: string): Promise<void> {
+		const response = await this.command({ type: "set_thinking_level", level });
+		if (!response.success) throw new Error(response.error);
 	}
 
 	async getGitDiff(path: string): Promise<string> {

@@ -7,7 +7,6 @@ test("creates a durable desktop task from a Windows workspace", () => {
 		projectId: "project-1",
 		title: "Desktop shell",
 		cwd: "D:\\work\\oh-my-pi\\",
-		executable: "omp",
 		provider: "openai",
 		model: "gpt-5.2-codex",
 	};
@@ -20,7 +19,6 @@ test("creates a durable desktop task from a Windows workspace", () => {
 	assert.equal(task.lastOpenedAt, 1234);
 	assert.deepEqual(task.launchConfig, {
 		cwd: "D:\\work\\oh-my-pi\\",
-		executable: "omp",
 		provider: "openai",
 		model: "gpt-5.2-codex",
 	});
@@ -32,7 +30,6 @@ test("derives a readable title from a POSIX workspace and omits blank launch opt
 			projectId: "project-2",
 			title: "",
 			cwd: "/work/oh-my-pi",
-			executable: undefined,
 			provider: undefined,
 			model: undefined,
 		},

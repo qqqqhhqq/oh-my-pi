@@ -117,6 +117,18 @@ The generated executable is written to `target/release/omp-desktop.exe`. Windows
 bun run bundle
 ```
 
+### Build on macOS
+
+Run the same commands on a macOS host to produce a native `.app` and `.dmg` bundle:
+
+```sh
+cd packages/desktop
+bun install
+bun run bundle
+```
+
+For release distribution, build separately for Apple Silicon (`aarch64-apple-darwin`) and Intel (`x86_64-apple-darwin`). Signing and notarization credentials are required before distributing the app outside your development machine.
+
 ## Every tool, _benchmaxxed_.
 
 Edits that land on the first attempt. Reads that summarize files instead of dumping their content. Searches that return instantly. Pick any model — omp will get it right.

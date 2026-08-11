@@ -12,7 +12,6 @@ import type {
 export interface DesktopRuntimeInfo {
 	available: boolean;
 	defaultWorkspace: string;
-	defaultExecutable: string;
 }
 
 export class TauriRpcBridge implements RpcBridge {
@@ -43,7 +42,7 @@ export class TauriRpcBridge implements RpcBridge {
 
 export async function getDesktopRuntimeInfo(): Promise<DesktopRuntimeInfo> {
 	if (!isTauri()) {
-		return { available: false, defaultWorkspace: "", defaultExecutable: "" };
+		return { available: false, defaultWorkspace: "" };
 	}
 	return invoke<DesktopRuntimeInfo>("get_runtime_info");
 }

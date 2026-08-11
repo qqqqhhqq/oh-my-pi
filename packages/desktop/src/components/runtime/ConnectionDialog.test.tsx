@@ -7,8 +7,8 @@ describe("OMP connection dialog", () => {
 		const html = renderToStaticMarkup(
 			<ConnectionDialog
 				open
-				runtimeInfo={{ available: true, defaultWorkspace: "C:/workspace", defaultExecutable: "omp" }}
-				initialConfig={{ cwd: "C:/workspace", executable: "omp" }}
+				runtimeInfo={{ available: true, defaultWorkspace: "C:/workspace" }}
+				initialConfig={{ cwd: "C:/workspace" }}
 				sessionPath="C:/sessions/stale.jsonl"
 				restoreFailed
 				busy={false}
@@ -27,7 +27,7 @@ describe("OMP connection dialog", () => {
 		const html = renderToStaticMarkup(
 			<ConnectionDialog
 				open
-				runtimeInfo={{ available: true, defaultWorkspace: "C:/workspace/oh-my-pi", defaultExecutable: "omp" }}
+				runtimeInfo={{ available: true, defaultWorkspace: "C:/workspace/oh-my-pi" }}
 				initialConfig={{ cwd: "C:/workspace/oh-my-pi" }}
 				workspaceReadOnly
 				busy={false}

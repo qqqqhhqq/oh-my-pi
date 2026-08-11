@@ -1,4 +1,4 @@
-import { Box, FolderGit2, PlugZap, X } from "lucide-react";
+import { FolderGit2, PlugZap, X } from "lucide-react";
 import { type FormEvent, useEffect, useState } from "react";
 import type { RpcLaunchConfig } from "../../rpc/rpc-session";
 import type { DesktopRuntimeInfo } from "../../rpc/tauri-rpc-bridge";
@@ -29,13 +29,11 @@ export function ConnectionDialog({
 	onConnect,
 }: ConnectionDialogProps) {
 	const [cwd, setCwd] = useState(initialConfig.cwd || runtimeInfo.defaultWorkspace);
-	const [executable, setExecutable] = useState(initialConfig.executable ?? runtimeInfo.defaultExecutable);
 	const [restoreSession, setRestoreSession] = useState(Boolean(sessionPath) && !restoreFailed);
 
 	useEffect(() => {
 		if (!open) return;
 		setCwd(initialConfig.cwd || runtimeInfo.defaultWorkspace);
-		setExecutable(initialConfig.executable ?? runtimeInfo.defaultExecutable);
 		setRestoreSession(Boolean(sessionPath) && !restoreFailed);
 	}, [open, runtimeInfo, initialConfig, sessionPath, restoreFailed]);
 
@@ -47,7 +45,6 @@ export function ConnectionDialog({
 			{
 				...initialConfig,
 				cwd: cwd.trim(),
-				executable: executable.trim() || undefined,
 			},
 			restoreSession,
 		);
@@ -89,18 +86,6 @@ export function ConnectionDialog({
 							disabled={busy}
 							readOnly={workspaceReadOnly}
 							spellCheck={false}
-						/>
-					</label>
-					<label>
-						<span>
-							<Box size={14} /> OMP executable or source entry
-						</span>
-						<input
-							value={executable}
-							onChange={event => setExecutable(event.target.value)}
-							disabled={busy}
-							spellCheck={false}
-							placeholder="omp"
 						/>
 					</label>
 					{sessionPath && (

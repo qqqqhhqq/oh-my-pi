@@ -1,4 +1,46 @@
 :root {
+	color-scheme: light;
+	--omp-bg-canvas: #ffffff;
+	--omp-bg-rail: #f7f7f8;
+	--omp-bg-surface: #ffffff;
+	--omp-bg-surface-hover: #f1f1f2;
+	--omp-bg-elevated: #ffffff;
+	--omp-bg-code: #f7f7f8;
+	--omp-border-subtle: #e8e8eb;
+	--omp-border: #d9d9de;
+	--omp-border-strong: #8ab9f8;
+	--omp-text: #242428;
+	--omp-text-soft: #505057;
+	--omp-text-muted: #777780;
+	--omp-text-faint: #a2a2aa;
+	--omp-cyan: #0a84ff;
+	--omp-cyan-bright: #0878e8;
+	--omp-cyan-soft: #eaf3ff;
+	--omp-cyan-faint: rgb(10 132 255 / 9%);
+	--omp-amber: #ad7415;
+	--omp-amber-soft: rgb(173 116 21 / 10%);
+	--omp-success: #2f855a;
+	--omp-success-text: #216a46;
+	--omp-danger: #d64545;
+	--omp-purple: #8b5cf6;
+	--omp-violet: #7c3aed;
+	--omp-pink: #e34bb6;
+	--omp-on-accent: #ffffff;
+	--omp-overlay-subtle: rgb(0 0 0 / 2%);
+	--omp-overlay-hover: rgb(0 0 0 / 4%);
+	--omp-overlay-strong: rgb(0 0 0 / 6%);
+	--omp-shadow: 0 18px 55px rgb(0 0 0 / 10%);
+	--omp-shadow-popover: 0 8px 24px rgb(0 0 0 / 15%);
+	--omp-font-sans: var(--omp-font-ui);
+	--omp-bg-hover: var(--omp-bg-surface-hover);
+	--omp-radius-sm: 7px;
+	--omp-radius-md: 10px;
+	--omp-radius-lg: 14px;
+	--omp-font-ui: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+	--omp-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+[data-theme="dark"] {
 	color-scheme: dark;
 	--omp-bg-canvas: #111315;
 	--omp-bg-rail: #151719;
@@ -20,13 +62,15 @@
 	--omp-amber: #febc38;
 	--omp-amber-soft: rgb(254 188 56 / 10%);
 	--omp-success: #89d281;
+	--omp-success-text: #bfe8d4;
 	--omp-danger: #fc3a4b;
 	--omp-purple: #b281d6;
+	--omp-violet: #b281d6;
 	--omp-pink: #ff5cc8;
+	--omp-on-accent: #071016;
+	--omp-overlay-subtle: rgb(255 255 255 / 2%);
+	--omp-overlay-hover: rgb(255 255 255 / 4%);
+	--omp-overlay-strong: rgb(255 255 255 / 6%);
 	--omp-shadow: 0 18px 55px rgb(0 0 0 / 22%);
-	--omp-radius-sm: 7px;
-	--omp-radius-md: 10px;
-	--omp-radius-lg: 14px;
-	--omp-font-ui: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-	--omp-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+	--omp-shadow-popover: 0 8px 24px rgb(0 0 0 / 35%);
 }

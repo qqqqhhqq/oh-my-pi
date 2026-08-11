@@ -1,4 +1,4 @@
-import { ArrowUp, Check, CircleStop, MoreHorizontal, Paperclip, Sparkles, X } from "lucide-react";
+import { ArrowUp, Check, CircleStop, Copy, MoreHorizontal, Paperclip, RotateCcw, Sparkles, X } from "lucide-react";
 import { type ComponentPropsWithoutRef, type FormEvent, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -12,6 +12,8 @@ interface ConversationPaneProps {
 	draft: string;
 	onDraftChange: (value: string) => void;
 	onPrompt: (message: string) => Promise<void>;
+	onSteer?: (message: string) => Promise<void>;
+	onAttachContext?: () => Promise<void>;
 	onAbort: () => Promise<void>;
 	onRefresh: () => Promise<void>;
 	onManageTask: () => void;
@@ -24,6 +26,23 @@ const taskStatusCopy: Record<DesktopTask["status"], string> = {
 	completed: "Completed",
 	failed: "Needs attention",
 };
+
+function formatTokens(tokens: number): string {
+	if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
+	if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(1)}k`;
+	return String(tokens);
+}
+
+export function resolveComposerKeyAction(
+	key: string,
+	shiftKey: boolean,
+	running: boolean,
+): "submit" | "newline" | "abort" | "none" {
+	if (key === "Escape" && running) return "abort";
+	if (key === "Enter" && !shiftKey) return "submit";
+	if (key === "Enter") return "newline";
+	return "none";
+}
 
 function SafeMarkdownLink({ href, children }: ComponentPropsWithoutRef<"a">) {
 	if (!href) return <>{children}</>;
@@ -44,6 +63,33 @@ function toolTurnStatus(steps: readonly ConversationEntry[]): "running" | "faile
 	if (steps.some(step => step.status === "failed")) return "failed";
 	if (steps.some(step => step.status !== "complete")) return "running";
 	return "complete";
+}
+
+function CopyButton({ value, label }: { value: string; label: string }) {
+	const [copied, setCopied] = useState(false);
+
+	async function copy() {
+		if (!value || !globalThis.navigator?.clipboard) return;
+		try {
+			await globalThis.navigator.clipboard.writeText(value);
+			setCopied(true);
+			globalThis.setTimeout(() => setCopied(false), 1200);
+		} catch {
+			setCopied(false);
+		}
+	}
+
+	return (
+		<button
+			className="transcript-copy-button"
+			type="button"
+			aria-label={label}
+			title={label}
+			onClick={() => void copy()}
+		>
+			{copied ? <Check size={13} /> : <Copy size={13} />}
+		</button>
+	);
 }
 
 function ToolTurn({ turnId, steps }: { turnId: string; steps: ConversationEntry[] }) {
@@ -109,7 +155,10 @@ function ToolTurn({ turnId, steps }: { turnId: string; steps: ConversationEntry[
 								<strong>{step.title}</strong>
 								<span className="tool-meta mono">{step.meta}</span>
 							</summary>
-							<pre className="tool-output">{step.body}</pre>
+							<div className="tool-output-wrap">
+								<pre className="tool-output">{step.body}</pre>
+								<CopyButton value={step.body} label="Copy tool output" />
+							</div>
 						</details>
 					))}
 				</div>
@@ -149,7 +198,15 @@ function transcriptItems(entries: readonly ConversationEntry[]): TranscriptItem[
 	return items;
 }
 
-function TranscriptEntry({ entry }: { entry: ConversationEntry }) {
+function TranscriptEntry({
+	entry,
+	onRetry,
+	retrying,
+}: {
+	entry: ConversationEntry;
+	onRetry?: () => void;
+	retrying?: boolean;
+}) {
 	if (entry.kind === "turn") return null;
 	if (entry.kind === "user") {
 		return (
@@ -161,16 +218,37 @@ function TranscriptEntry({ entry }: { entry: ConversationEntry }) {
 	}
 
 	return (
-		<article className={`transcript-entry transcript-${entry.kind}`}>
+		<article className={`transcript-entry transcript-${entry.kind}`} data-status={entry.status}>
 			<div className="assistant-gutter">
 				<span className="assistant-mark">π</span>
 			</div>
 			<div className="assistant-content">
-				<div className="entry-meta">{entry.meta}</div>
+				<div className="entry-meta">
+					<span>{entry.meta}</span>
+					{entry.kind === "assistant" && entry.status === "running" && (
+						<span className="streaming-reply">
+							<span className="activity-spinner" /> Streaming reply
+						</span>
+					)}
+				</div>
 				{entry.title && <h2>{entry.title}</h2>}
 				<ReactMarkdown components={{ a: SafeMarkdownLink }} remarkPlugins={[remarkGfm]}>
 					{entry.body}
 				</ReactMarkdown>
+				{(entry.kind === "assistant" || entry.kind === "notice") && entry.body && (
+					<CopyButton value={entry.body} label="Copy message" />
+				)}
+				{entry.status === "failed" && onRetry && (
+					<button
+						className="transcript-retry-button"
+						type="button"
+						disabled={retrying}
+						aria-label="Retry response"
+						onClick={onRetry}
+					>
+						<RotateCcw size={13} /> {retrying ? "Retrying…" : "Retry response"}
+					</button>
+				)}
 			</div>
 		</article>
 	);
@@ -183,6 +261,8 @@ export function ConversationPane({
 	draft,
 	onDraftChange,
 	onPrompt,
+	onSteer,
+	onAttachContext,
 	onAbort,
 	onRefresh,
 	onManageTask,
@@ -190,6 +270,10 @@ export function ConversationPane({
 	const [submitting, setSubmitting] = useState(false);
 	const [composerError, setComposerError] = useState<string>();
 	const connected = runtime.status === "connected";
+	const latestUserPrompt = entries
+		.toReversed()
+		.find(entry => entry.kind === "user")
+		?.body.trim();
 
 	async function handleSubmit(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
@@ -198,8 +282,21 @@ export function ConversationPane({
 		setSubmitting(true);
 		setComposerError(undefined);
 		try {
-			await onPrompt(message);
+			await (task.status === "running" && onSteer ? onSteer(message) : onPrompt(message));
 			onDraftChange("");
+		} catch (error) {
+			setComposerError(error instanceof Error ? error.message : String(error));
+		} finally {
+			setSubmitting(false);
+		}
+	}
+
+	async function handleRetry() {
+		if (!latestUserPrompt || !connected || submitting) return;
+		setSubmitting(true);
+		setComposerError(undefined);
+		try {
+			await onPrompt(latestUserPrompt);
 		} catch (error) {
 			setComposerError(error instanceof Error ? error.message : String(error));
 		} finally {
@@ -231,9 +328,15 @@ export function ConversationPane({
 							<OmpIcon name="cwd" />
 							{task.cwd}
 						</span>
-						<span>
+						<span title="当前会话上下文使用">
 							<OmpIcon name="context" />
 							{task.contextPercent}%
+							{task.contextTokens != null && task.contextWindow != null
+								? ` · ${formatTokens(task.contextTokens)}/${formatTokens(task.contextWindow)}`
+								: ""}
+							{task.modelCost != null && task.contextTokens != null
+								? ` · ≈$${((task.contextTokens / 1_000_000) * task.modelCost).toFixed(4)}`
+								: ""}
 						</span>
 					</div>
 				</div>
@@ -264,7 +367,12 @@ export function ConversationPane({
 					item.kind === "tool-turn" ? (
 						<ToolTurn key={item.turnId} turnId={item.turnId} steps={item.steps} />
 					) : (
-						<TranscriptEntry entry={item.entry} key={item.entry.id} />
+						<TranscriptEntry
+							entry={item.entry}
+							key={item.entry.id}
+							onRetry={item.entry.status === "failed" && latestUserPrompt ? () => void handleRetry() : undefined}
+							retrying={submitting}
+						/>
 					),
 				)}
 			</div>
@@ -279,7 +387,13 @@ export function ConversationPane({
 						value={draft}
 						onChange={event => onDraftChange(event.target.value)}
 						onKeyDown={event => {
-							if (event.key === "Enter" && !event.shiftKey) {
+							const action = resolveComposerKeyAction(event.key, event.shiftKey, task.status === "running");
+							if (action === "abort") {
+								event.preventDefault();
+								void onAbort();
+								return;
+							}
+							if (action === "submit") {
 								event.preventDefault();
 								event.currentTarget.form?.requestSubmit();
 							}
@@ -287,35 +401,42 @@ export function ConversationPane({
 					/>
 					<div className="composer-toolbar">
 						<div className="composer-tools">
-							<button type="button" disabled aria-label="Attach context">
+							<button
+								type="button"
+								disabled={!onAttachContext}
+								aria-label="Attach context"
+								title={onAttachContext ? "Attach files as context" : "Available in the native desktop runtime"}
+								onClick={() => void onAttachContext?.()}
+							>
 								<Paperclip size={15} />
 							</button>
-							<button type="button" disabled className="mode-pill">
+							<span className="mode-pill">
 								<Sparkles size={14} />
 								Agent
-							</button>
-							<button type="button" disabled className="mode-pill mono">
-								{task.model}
-							</button>
+							</span>
+							<span className="mode-pill mono">{task.model}</span>
 						</div>
 						<div className="composer-submit">
 							<span className={composerError ? "composer-error" : undefined}>
 								{composerError ??
-									(connected ? "Enter to send · Shift+Enter for newline" : "Connect RPC to send prompts")}
+									(connected
+										? task.status === "running"
+											? "Enter to steer · Shift+Enter for newline"
+											: "Enter to send · Shift+Enter for newline"
+										: "Connect RPC to send prompts")}
 							</span>
-							{task.status === "running" && connected ? (
+							{task.status === "running" && connected && (
 								<button type="button" onClick={() => void onAbort()} aria-label="Stop task">
 									<CircleStop size={17} />
 								</button>
-							) : (
-								<button
-									type="submit"
-									disabled={!connected || !draft.trim() || submitting}
-									aria-label="Send prompt"
-								>
-									{submitting ? <span className="activity-spinner" /> : <ArrowUp size={17} />}
-								</button>
 							)}
+							<button
+								type="submit"
+								disabled={!connected || !draft.trim() || submitting}
+								aria-label={task.status === "running" ? "Steer OMP" : "Send prompt"}
+							>
+								{submitting ? <span className="activity-spinner" /> : <ArrowUp size={17} />}
+							</button>
 						</div>
 					</div>
 				</form>

@@ -100,7 +100,6 @@ test("connecting a fixture task clears preview content and records the workspace
 		taskId: "build-desktop",
 		config: {
 			cwd: "C:/workspace/oh-my-pi",
-			executable: "omp",
 			provider: "openai",
 			model: "gpt-5.2-codex",
 		},
@@ -110,7 +109,6 @@ test("connecting a fixture task clears preview content and records the workspace
 	assert.equal(next.tasks[0]?.cwd, "C:/workspace/oh-my-pi");
 	assert.deepEqual(next.tasks[0]?.launchConfig, {
 		cwd: "C:/workspace/oh-my-pi",
-		executable: "omp",
 		provider: "openai",
 		model: "gpt-5.2-codex",
 	});
@@ -133,7 +131,6 @@ test("reconfiguring a pending task updates its project and launch context", () =
 		title: "Inspect the coding agent",
 		config: {
 			cwd: "packages/coding-agent",
-			executable: "omp",
 			provider: "openai",
 			model: "gpt-5.2-codex",
 		},
@@ -148,7 +145,6 @@ test("reconfiguring a pending task updates its project and launch context", () =
 		model: "gpt-5.2-codex",
 		launchConfig: {
 			cwd: "packages/coding-agent",
-			executable: "omp",
 			provider: "openai",
 			model: "gpt-5.2-codex",
 		},
@@ -189,6 +185,34 @@ test("RPC state updates model, thinking, context, and streaming status", () => {
 	assert.equal(next.tasks[0]?.status, "running");
 	assert.equal(next.tasks[0]?.sessionPath, "C:/sessions/session-1.jsonl");
 	assert.equal(next.runtimes["build-desktop"]?.sessionId, "session-1");
+});
+
+test("RPC failures become a recoverable transcript notice without deleting the draft", () => {
+	const state: DesktopState = {
+		...baseState,
+		conversations: {
+			...baseState.conversations,
+			"build-desktop": [{ id: "user-1", kind: "user", body: "Inspect the repository" }],
+		},
+		composerDrafts: { ...baseState.composerDrafts, "build-desktop": "Try again with the tests" },
+	};
+	const next = desktopReducer(state, {
+		type: "rpc.failed",
+		taskId: "build-desktop",
+		error: "The local OMP session disconnected.",
+	});
+
+	assert.equal(next.tasks[0]?.status, "failed");
+	assert.equal(next.runtimes["build-desktop"]?.status, "error");
+	assert.equal(next.composerDrafts["build-desktop"], "Try again with the tests");
+	assert.deepEqual(next.conversations["build-desktop"]?.at(-1), {
+		id: "rpc-error-build-desktop",
+		kind: "notice",
+		title: "OMP error",
+		body: "The local OMP session disconnected.",
+		meta: "error",
+		status: "failed",
+	});
 });
 
 test("a failed session restore remains recoverable without deleting durable metadata", () => {
@@ -388,6 +412,18 @@ test("an archived task can be selected from the archived catalog", () => {
 	assert.equal(next.tasks[0]?.lastOpenedAt, 300);
 });
 
+test("favoriting a task toggles only its favorite flag", () => {
+	const first = desktopReducer(baseState, { type: "task.favorited", taskId: "build-desktop", favorite: true });
+
+	assert.equal(first.tasks[0]?.favorite, true);
+	assert.equal(first.tasks[1]?.favorite, undefined);
+	assert.equal(first.selectedTaskId, baseState.selectedTaskId);
+
+	const second = desktopReducer(first, { type: "task.favorited", taskId: "build-desktop", favorite: false });
+
+	assert.equal(second.tasks[0]?.favorite, false);
+});
+
 test("deleting a task removes all task-scoped state without deleting another task", () => {
 	const next = desktopReducer(baseState, { type: "task.deleted", taskId: "build-desktop" });
 
@@ -416,7 +452,7 @@ test("hydrating persisted tasks resets process state while preserving durable me
 			branch: "codex/desktop-agent-ui",
 			archived: false,
 			lastOpenedAt: 500,
-			launchConfig: { cwd: "C:/workspace/oh-my-pi", executable: "omp" },
+			launchConfig: { cwd: "C:/workspace/oh-my-pi" },
 			sessionPath: "C:/sessions/saved.jsonl",
 		},
 	]);

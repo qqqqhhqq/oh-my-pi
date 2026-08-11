@@ -1,20 +1,20 @@
 import { isTauri } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useReducer, useRef, useState } from "react";
 import { ConversationPane } from "../components/conversation/ConversationPane";
 import { AppTitlebar } from "../components/runtime/AppTitlebar";
 import { ConnectionDialog } from "../components/runtime/ConnectionDialog";
 import { ExtensionRequestDialog } from "../components/runtime/ExtensionRequestDialog";
-import { ProjectDialog } from "../components/tasks/ProjectDialog";
 import { SessionComposer, type SessionComposerDraft } from "../components/tasks/SessionComposer";
 import { TaskActionDialog } from "../components/tasks/TaskActionDialog";
 import { TaskRail } from "../components/tasks/TaskRail";
 import { Workbench } from "../components/workbench/Workbench";
-import type { RpcLaunchConfig } from "../rpc/rpc-session";
+import type { RpcLaunchConfig, RpcModelInfo } from "../rpc/rpc-session";
 import { useDesktopRpc } from "../rpc/use-desktop-rpc";
 import { openWorkspaceInEditor } from "../runtime/editor";
 import { selectStartupTask, shouldAutoStartBackend, shouldCreateDefaultSession } from "../runtime/startup-task";
 import { createDesktopStateFromCatalog, desktopReducer, initialDesktopState } from "../state/desktop-state";
-import { createDesktopProject, type DesktopProjectDraft } from "../state/project-factory";
+import { createDesktopProject, workspaceName } from "../state/project-factory";
 import { loadTaskCatalog, saveTaskCatalog, TASK_CATALOG_KEY } from "../state/task-catalog";
 import { createDesktopTask } from "../state/task-factory";
 import { useDesktopTerminal } from "../terminal/use-desktop-terminal";
@@ -52,8 +52,8 @@ export function App() {
 	const [sessionComposerTaskId, setSessionComposerTaskId] = useState<string>();
 	const [newTaskBusy, setNewTaskBusy] = useState(false);
 	const [newTaskError, setNewTaskError] = useState<string>();
-	const [newProjectOpen, setNewProjectOpen] = useState(false);
-	const [newProjectError, setNewProjectError] = useState<string>();
+	const [availableModels, setAvailableModels] = useState<RpcModelInfo[]>([]);
+	const [composerInitialProjectId, setComposerInitialProjectId] = useState<string>();
 	const [taskActionsOpen, setTaskActionsOpen] = useState(false);
 	const [taskActionBusy, setTaskActionBusy] = useState(false);
 	const [taskActionError, setTaskActionError] = useState<string>();
@@ -97,7 +97,6 @@ export function App() {
 				projectId: project.id,
 				title: "",
 				cwd: project.cwd,
-				executable: rpc.runtimeInfo.defaultExecutable,
 			},
 			globalThis.crypto.randomUUID(),
 			Date.now(),
@@ -108,6 +107,20 @@ export function App() {
 
 	const agents = selectedTask ? (state.agents[selectedTask.id] ?? []) : [];
 	const git = selectedTask ? (state.git[selectedTask.id] ?? { status: "idle" as const }) : { status: "idle" as const };
+
+	// Load the connected session's model catalog for the composer's model picker.
+	useEffect(() => {
+		if (!sessionComposerOpen) return;
+		const connectedTask = state.tasks.find(task => state.runtimes[task.id]?.status === "connected");
+		if (!connectedTask) {
+			setAvailableModels([]);
+			return;
+		}
+		void rpc
+			.getAvailableModels(connectedTask.id)
+			.then(models => setAvailableModels(models))
+			.catch(() => setAvailableModels([]));
+	}, [sessionComposerOpen, rpc, state.runtimes, state.tasks]);
 	const terminal = selectedTask
 		? (state.terminals[selectedTask.id] ?? { status: "offline" as const, output: "", outputOffset: 0 })
 		: { status: "offline" as const, output: "", outputOffset: 0 };
@@ -143,20 +156,21 @@ export function App() {
 			: undefined;
 		const launchConfig: RpcLaunchConfig = {
 			cwd: project.cwd,
-			...(draft.executable ? { executable: draft.executable } : {}),
 			...(draft.provider ? { provider: draft.provider } : {}),
 			...(draft.model ? { model: draft.model } : {}),
+			...(draft.approvalMode ? { approvalMode: draft.approvalMode } : {}),
+			...(draft.thinking ? { thinking: draft.thinking } : {}),
 		};
 		const task =
 			existingTask ??
 			createDesktopTask(
 				{
 					projectId: draft.projectId,
-					title: draft.title,
 					cwd: project.cwd,
-					executable: draft.executable,
 					provider: draft.provider,
 					model: draft.model,
+					approvalMode: draft.approvalMode,
+					thinking: draft.thinking,
 				},
 				globalThis.crypto.randomUUID(),
 				Date.now(),
@@ -169,7 +183,7 @@ export function App() {
 				type: "task.reconfigured",
 				taskId: task.id,
 				projectId: project.id,
-				title: draft.title,
+				title: workspaceName(project.cwd),
 				config: launchConfig,
 			});
 		}
@@ -186,14 +200,52 @@ export function App() {
 		}
 	}
 
-	function createProject(draft: DesktopProjectDraft) {
-		if (projects.some(project => project.cwd.toLocaleLowerCase() === draft.cwd.toLocaleLowerCase())) {
-			setNewProjectError("This local folder is already registered as a project.");
-			return;
+	async function openProjectFolder() {
+		if (!isTauri()) return;
+		try {
+			const selected = await open({ title: "Choose a project folder", directory: true, multiple: false });
+			if (typeof selected !== "string") return;
+			const cwd = selected;
+			if (projects.some(project => project.cwd.toLocaleLowerCase() === cwd.toLocaleLowerCase())) {
+				const existing = projects.find(project => project.cwd.toLocaleLowerCase() === cwd.toLocaleLowerCase());
+				if (existing) setComposerInitialProjectId(existing.id);
+				return;
+			}
+			const project = createDesktopProject({ title: workspaceName(cwd), cwd }, globalThis.crypto.randomUUID());
+			setProjects(existing => [...existing, project]);
+			// A composer waiting for a project picks up the freshly opened folder.
+			setComposerInitialProjectId(project.id);
+		} catch (error) {
+			setNewTaskError(error instanceof Error ? error.message : String(error));
 		}
-		setProjects(existing => [...existing, createDesktopProject(draft, globalThis.crypto.randomUUID())]);
-		setNewProjectError(undefined);
-		setNewProjectOpen(false);
+	}
+
+	async function attachContext(taskId: string) {
+		if (!isTauri()) return;
+		try {
+			const selected = await open({ title: "Add context files", directory: false, multiple: true });
+			const files = Array.isArray(selected) ? selected : selected ? [selected] : [];
+			if (files.length === 0) return;
+			const current = state.composerDrafts[taskId] ?? "";
+			const contextBlock = `Context files:\n${files.map(file => `- ${file}`).join("\n")}`;
+			dispatch({
+				type: "composer.changed",
+				taskId,
+				value: current.trim() ? `${current.trim()}\n\n${contextBlock}` : contextBlock,
+			});
+		} catch (error) {
+			dispatch({
+				type: "rpc.ui_effect",
+				taskId,
+				effect: {
+					type: "extension_ui_request",
+					id: `context-picker-${Date.now()}`,
+					method: "notify",
+					message: error instanceof Error ? error.message : String(error),
+					notifyType: "error",
+				},
+			});
+		}
 	}
 
 	async function archiveSelected(archived: boolean) {
@@ -234,38 +286,85 @@ export function App() {
 		setCatalogError(undefined);
 	}
 
-	function cancelSessionComposer() {
-		const taskId = sessionComposerTaskId;
-		setSessionComposerOpen(false);
-		setSessionComposerTaskId(undefined);
-		setNewTaskError(undefined);
-		if (taskId) void rpc.disconnect(taskId);
-	}
-
 	return (
 		<>
 			<AppTitlebar native={isTauri()} />
-			<main className="desktop-shell">
+			<main className="desktop-shell" data-theme="light">
 				<TaskRail
 					state={state}
 					projects={projects}
-					onSelectTask={taskId => dispatch({ type: "task.selected", taskId, openedAt: Date.now() })}
 					runtime={runtime}
 					rpcAvailable={rpc.runtimeInfo.available}
-					onNewTask={() => setSessionComposerOpen(true)}
-					onNewProject={() => setNewProjectOpen(true)}
+					onNewTask={() => {
+						setComposerInitialProjectId(undefined);
+						setSessionComposerOpen(true);
+					}}
+					onQuickNewSession={projectId => {
+						setComposerInitialProjectId(projectId);
+						setSessionComposerOpen(true);
+					}}
+					onSelectTask={taskId => {
+						// Clicking a session leaves the new-task composer and opens that session.
+						setSessionComposerOpen(false);
+						setSessionComposerTaskId(undefined);
+						dispatch({ type: "task.selected", taskId, openedAt: Date.now() });
+					}}
+					onArchiveTask={(taskId, archived) => {
+						if (taskId === selectedTask?.id && archived) void rpc.disconnect(taskId);
+						dispatch({ type: "task.archived", taskId, archived });
+					}}
+					onToggleFavorite={(taskId, favorite) => dispatch({ type: "task.favorited", taskId, favorite })}
 					onConnect={() => setConnectionOpen(true)}
 					onDisconnect={() => selectedTask && void rpc.disconnect(selectedTask.id)}
 				/>
 				{sessionComposerOpen ? (
-					<SessionComposer
-						runtimeInfo={rpc.runtimeInfo}
-						projects={projects}
-						busy={newTaskBusy}
-						error={newTaskError}
-						onCancel={cancelSessionComposer}
-						onCreate={createTask}
-					/>
+					<>
+						<SessionComposer
+							projects={projects}
+							initialProjectId={composerInitialProjectId}
+							busy={newTaskBusy}
+							error={newTaskError}
+							onCreate={createTask}
+							onOpenProject={() => void openProjectFolder()}
+							availableModels={availableModels}
+							context={
+								selectedTask
+									? {
+											model: selectedTask.model,
+											percent: selectedTask.contextPercent,
+											tokens: selectedTask.contextTokens,
+											contextWindow: selectedTask.contextWindow,
+											modelCost: selectedTask.modelCost,
+										}
+									: undefined
+							}
+						/>
+						{selectedTask && (
+							<Workbench
+								task={selectedTask}
+								activeTab={state.activeWorkbenchTab}
+								onSelectTab={tab => dispatch({ type: "workbench.selected", tab })}
+								runtime={runtime}
+								agents={agents}
+								git={git}
+								onRefreshGit={() => rpc.refreshGit(selectedTask.id)}
+								onSelectGitPath={path => rpc.loadGitDiff(selectedTask.id, path)}
+								onStageGitChanges={paths => rpc.stageGitChanges(selectedTask.id, paths)}
+								onDiscardGitChanges={paths => rpc.discardGitChanges(selectedTask.id, paths)}
+								onOpenEditor={() => openWorkspaceInEditor(selectedTask.cwd)}
+								terminalAvailable={terminalController.available}
+								terminal={terminal}
+								onStartTerminal={(rows, cols) =>
+									terminalController.start(selectedTask.id, selectedTask.cwd, rows, cols)
+								}
+								onWriteTerminal={data => terminalController.write(selectedTask.id, data)}
+								onWriteTerminalBinary={data => terminalController.writeBinary(selectedTask.id, data)}
+								onInterruptTerminal={() => terminalController.interrupt(selectedTask.id)}
+								onResizeTerminal={(rows, cols) => terminalController.resize(selectedTask.id, rows, cols)}
+								onStopTerminal={() => terminalController.stop(selectedTask.id)}
+							/>
+						)}
+					</>
 				) : selectedTask ? (
 					<>
 						<ConversationPane
@@ -275,6 +374,8 @@ export function App() {
 							draft={state.composerDrafts[selectedTask.id] ?? ""}
 							onDraftChange={value => dispatch({ type: "composer.changed", taskId: selectedTask.id, value })}
 							onPrompt={message => rpc.prompt(selectedTask.id, message)}
+							onSteer={message => rpc.steer(selectedTask.id, message)}
+							onAttachContext={isTauri() ? () => attachContext(selectedTask.id) : undefined}
 							onAbort={() => rpc.abort(selectedTask.id)}
 							onRefresh={() => rpc.refresh(selectedTask.id)}
 							onManageTask={() => setTaskActionsOpen(true)}
@@ -321,7 +422,7 @@ export function App() {
 									className="primary-button"
 									type="button"
 									disabled={!rpc.runtimeInfo.available}
-									onClick={() => setNewProjectOpen(true)}
+									onClick={() => void openProjectFolder()}
 								>
 									Add local project
 								</button>
@@ -343,13 +444,6 @@ export function App() {
 						onConnect={(config, restoreSession) => connect(selectedTask.id, config, restoreSession)}
 					/>
 				)}
-				<ProjectDialog
-					open={newProjectOpen}
-					busy={false}
-					error={newProjectError}
-					onClose={() => setNewProjectOpen(false)}
-					onCreate={createProject}
-				/>
 				{selectedTask && (
 					<TaskActionDialog
 						task={selectedTask}

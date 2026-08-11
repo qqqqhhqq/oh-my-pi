@@ -16,15 +16,21 @@ export interface DesktopTask {
 	status: TaskStatus;
 	mode: "worktree" | "direct";
 	model: string;
-	thinking: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+	approvalMode?: "always-ask" | "write" | "yolo";
+	thinking: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "auto";
 	cwd: string;
 	branch: string;
 	elapsed: string;
 	contextPercent: number;
+	contextTokens?: number;
+	contextWindow?: number;
+	/** Effective model input price in $/M tokens, from the live RPC state. */
+	modelCost?: number;
 	additions: number;
 	deletions: number;
 	agentCount: number;
 	archived: boolean;
+	favorite?: boolean;
 	lastOpenedAt: number;
 	launchConfig: RpcLaunchConfig;
 	sessionPath?: string;
@@ -38,6 +44,9 @@ export interface ConversationEntry {
 	meta?: string;
 	status?: "running" | "complete" | "waiting" | "failed";
 	turnId?: string;
+	toolCallId?: string;
+	toolArgs?: string;
+	toolResult?: string;
 }
 
 export type RpcConnectionStatus = "preview" | "disconnected" | "connecting" | "connected" | "error";
@@ -76,12 +85,12 @@ export interface DesktopTerminalRuntime {
 }
 
 export interface RpcStateProjection {
-	model?: { id: string };
+	model?: { id: string; cost?: { input: number; output: number; cacheRead: number } };
 	thinkingLevel?: string;
 	isStreaming: boolean;
 	sessionId: string;
 	sessionFile?: string;
-	contextUsage?: { percent: number };
+	contextUsage?: { percent: number; tokens?: number; contextWindow?: number };
 }
 
 export interface DesktopState {
@@ -102,6 +111,7 @@ export type DesktopAction =
 	| { type: "task.renamed"; taskId: string; title: string }
 	| { type: "task.reconfigured"; taskId: string; projectId: string; title: string; config: RpcLaunchConfig }
 	| { type: "task.archived"; taskId: string; archived: boolean }
+	| { type: "task.favorited"; taskId: string; favorite: boolean }
 	| { type: "task.deleted"; taskId: string }
 	| { type: "task.session_file_changed"; taskId: string; sessionPath?: string }
 	| { type: "workbench.selected"; tab: WorkbenchTab }
@@ -167,6 +177,27 @@ function fallbackTaskId(tasks: readonly DesktopTask[]): string {
 	);
 }
 
+function withRpcErrorNotice(
+	conversations: Record<string, ConversationEntry[]>,
+	taskId: string,
+	error: string,
+): Record<string, ConversationEntry[]> {
+	const current = conversations[taskId] ?? [];
+	const notice: ConversationEntry = {
+		id: `rpc-error-${taskId}`,
+		kind: "notice",
+		title: "OMP error",
+		body: error,
+		meta: "error",
+		status: "failed",
+	};
+	const existingIndex = current.findIndex(entry => entry.id === notice.id);
+	const next = [...current];
+	if (existingIndex >= 0) next[existingIndex] = notice;
+	else next.push(notice);
+	return { ...conversations, [taskId]: next };
+}
+
 export function createDesktopStateFromCatalog(tasks: readonly PersistedDesktopTask[]): DesktopState {
 	const hydratedTasks: DesktopTask[] = tasks.map(task => ({
 		...task,
@@ -204,7 +235,8 @@ function normalizeThinking(value: string | undefined, fallback: DesktopTask["thi
 		value === "medium" ||
 		value === "high" ||
 		value === "xhigh" ||
-		value === "max"
+		value === "max" ||
+		value === "auto"
 	) {
 		return value;
 	}
@@ -289,6 +321,12 @@ export function desktopReducer(state: DesktopState, action: DesktopAction): Desk
 					state.selectedTaskId === action.taskId && action.archived ? fallbackTaskId(tasks) : state.selectedTaskId,
 			};
 		}
+		case "task.favorited": {
+			return {
+				...state,
+				tasks: updateTask(state, action.taskId, task => ({ ...task, favorite: action.favorite })),
+			};
+		}
 		case "task.deleted": {
 			if (!state.tasks.some(task => task.id === action.taskId)) return state;
 			const tasks = state.tasks.filter(task => task.id !== action.taskId);
@@ -322,6 +360,8 @@ export function desktopReducer(state: DesktopState, action: DesktopAction): Desk
 					cwd: action.config.cwd,
 					launchConfig: action.config,
 					model: action.config.model ?? task.model,
+					approvalMode: action.config.approvalMode ?? task.approvalMode,
+					thinking: normalizeThinking(action.config.thinking, task.thinking),
 					mode: "direct",
 					status: "waiting",
 				})),
@@ -358,6 +398,7 @@ export function desktopReducer(state: DesktopState, action: DesktopAction): Desk
 			return {
 				...state,
 				tasks: updateTask(state, action.taskId, task => ({ ...task, status: "failed" })),
+				conversations: withRpcErrorNotice(state.conversations, action.taskId, action.error),
 				runtimes: updateRuntime(state, action.taskId, runtime => ({
 					...runtime,
 					status: "error",
@@ -391,8 +432,11 @@ export function desktopReducer(state: DesktopState, action: DesktopAction): Desk
 				tasks: updateTask(state, action.taskId, task => ({
 					...task,
 					model: action.state.model?.id ?? task.model,
+					modelCost: action.state.model?.cost?.input ?? task.modelCost,
 					thinking: normalizeThinking(action.state.thinkingLevel, task.thinking),
 					contextPercent: Math.round(action.state.contextUsage?.percent ?? task.contextPercent),
+					contextTokens: action.state.contextUsage?.tokens ?? task.contextTokens,
+					contextWindow: action.state.contextUsage?.contextWindow ?? task.contextWindow,
 					status: action.state.isStreaming ? "running" : "waiting",
 					sessionPath: action.state.sessionFile ?? task.sessionPath,
 				})),

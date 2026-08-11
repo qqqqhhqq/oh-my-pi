@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { ConversationPane } from "./ConversationPane";
+import { ConversationPane, resolveComposerKeyAction } from "./ConversationPane";
 
 const task = {
 	id: "session-1",
@@ -152,5 +152,139 @@ describe("conversation rendering", () => {
 
 		expect(html.match(/class="tool-turn"/g)).toHaveLength(1);
 		expect(html).toContain("2 steps");
+	});
+
+	test("renders streaming, copy, completed tools, running tools, and error notices in the transcript", () => {
+		const html = renderToStaticMarkup(
+			<ConversationPane
+				task={task}
+				entries={[
+					{
+						id: "assistant-streaming",
+						kind: "assistant",
+						body: "Still inspecting the worktree",
+						meta: "OMP",
+						status: "running",
+					},
+					{
+						id: "tool-complete",
+						kind: "tool",
+						title: "read",
+						body: "README.md",
+						meta: "completed",
+						status: "complete",
+						turnId: "turn-complete",
+					},
+					{
+						id: "tool-running",
+						kind: "tool",
+						title: "bash",
+						body: "git status --short",
+						meta: "running",
+						status: "running",
+						turnId: "turn-running",
+					},
+					{
+						id: "notice-error",
+						kind: "notice",
+						title: "OMP error",
+						body: "Approval was denied",
+						meta: "error",
+						status: "failed",
+					},
+				]}
+				runtime={{ status: "connected", stderr: [] }}
+				draft=""
+				onDraftChange={() => {}}
+				onPrompt={async () => {}}
+				onAbort={async () => {}}
+				onRefresh={async () => {}}
+				onManageTask={() => {}}
+			/>,
+		);
+
+		expect(html).toContain("Streaming reply");
+		expect(html).toContain('aria-label="Copy message"');
+		expect(html).toContain('aria-label="Copy tool output"');
+		expect(html).toContain('data-turn-id="turn-complete"');
+		expect(html).not.toContain('data-turn-id="turn-complete"><details open=""');
+		expect(html).toContain('data-turn-id="turn-running"');
+		expect(html).toContain('data-turn-id="turn-running"><details open=""');
+		expect(html).toContain("OMP error");
+		expect(html).toContain('data-status="failed"');
+	});
+
+	test("offers retry for a failed response using the latest user prompt", () => {
+		const html = renderToStaticMarkup(
+			<ConversationPane
+				task={{ ...task, status: "failed" }}
+				entries={[
+					{ id: "user-1", kind: "user", body: "Run the test suite", meta: "You" },
+					{
+						id: "notice-error",
+						kind: "notice",
+						title: "OMP error",
+						body: "The backend stopped.",
+						status: "failed",
+					},
+				]}
+				runtime={{ status: "connected", stderr: [] }}
+				draft=""
+				onDraftChange={() => {}}
+				onPrompt={async () => {}}
+				onAbort={async () => {}}
+				onRefresh={async () => {}}
+				onManageTask={() => {}}
+			/>,
+		);
+
+		expect(html).toContain('aria-label="Retry response"');
+	});
+
+	test("turns the send action into a steering action while OMP is working", () => {
+		const html = renderToStaticMarkup(
+			<ConversationPane
+				task={{ ...task, status: "running" }}
+				entries={[]}
+				runtime={{ status: "connected", stderr: [] }}
+				draft="Interrupt the current turn"
+				onDraftChange={() => {}}
+				onPrompt={async () => {}}
+				onSteer={async () => {}}
+				onAbort={async () => {}}
+				onRefresh={async () => {}}
+				onManageTask={() => {}}
+			/>,
+		);
+
+		expect(html).toContain('aria-label="Steer OMP"');
+		expect(html).toContain("Enter to steer");
+	});
+
+	test("maps composer keyboard shortcuts to submit, newline, and stop actions", () => {
+		expect(resolveComposerKeyAction("Enter", false, false)).toBe("submit");
+		expect(resolveComposerKeyAction("Enter", true, false)).toBe("newline");
+		expect(resolveComposerKeyAction("Escape", false, true)).toBe("abort");
+		expect(resolveComposerKeyAction("Escape", false, false)).toBe("none");
+	});
+
+	test("enables context attachment when the native picker is available", () => {
+		const html = renderToStaticMarkup(
+			<ConversationPane
+				task={task}
+				entries={[]}
+				runtime={{ status: "connected", stderr: [] }}
+				draft=""
+				onDraftChange={() => {}}
+				onPrompt={async () => {}}
+				onAttachContext={async () => {}}
+				onAbort={async () => {}}
+				onRefresh={async () => {}}
+				onManageTask={() => {}}
+			/>,
+		);
+
+		expect(html).toMatch(/<button[^>]*aria-label="Attach context"[^>]*>/);
+		expect(html).not.toContain('type="button" disabled="" aria-label="Attach context"');
 	});
 });

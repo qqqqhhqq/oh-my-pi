@@ -20,11 +20,12 @@ const MAX_RPC_FRAME_BYTES: usize = 1024 * 1024;
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcLaunchConfig {
-	cwd:         String,
-	executable:  Option<String>,
-	provider:    Option<String>,
-	model:       Option<String>,
-	session_dir: Option<String>,
+	cwd:           String,
+	provider:      Option<String>,
+	model:         Option<String>,
+	approval_mode: Option<String>,
+	thinking:      Option<String>,
+	session_dir:   Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -51,9 +52,8 @@ struct RpcExitPayload {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DesktopRuntimeInfo {
-	available:          bool,
-	default_workspace:  String,
-	default_executable: String,
+	available:         bool,
+	default_workspace: String,
 }
 
 struct RpcProcess {
@@ -168,18 +168,17 @@ fn default_executable() -> String {
 	"omp".to_owned()
 }
 
-fn launch_spec(config: &RpcLaunchConfig) -> LaunchSpec {
-	let executable = config.executable.clone().unwrap_or_else(default_executable);
-	let extension = Path::new(&executable)
+fn command_spec(executable: &str, config: &RpcLaunchConfig) -> LaunchSpec {
+	let extension = Path::new(executable)
 		.extension()
 		.and_then(|value| value.to_str())
 		.map(str::to_ascii_lowercase);
 	let is_script = matches!(extension.as_deref(), Some("js" | "mjs" | "cjs" | "ts"));
 
 	let (program, mut args) = if is_script {
-		(bun_executable(), vec![executable])
+		(bun_executable(), vec![executable.to_owned()])
 	} else {
-		(executable, Vec::new())
+		(executable.to_owned(), Vec::new())
 	};
 
 	args.extend(["--mode".to_owned(), "rpc-ui".to_owned()]);
@@ -189,11 +188,21 @@ fn launch_spec(config: &RpcLaunchConfig) -> LaunchSpec {
 	if let Some(model) = &config.model {
 		args.extend(["--model".to_owned(), model.clone()]);
 	}
+	if let Some(approval_mode) = &config.approval_mode {
+		args.extend(["--approval-mode".to_owned(), approval_mode.clone()]);
+	}
+	if let Some(thinking) = &config.thinking {
+		args.extend(["--thinking".to_owned(), thinking.clone()]);
+	}
 	if let Some(session_dir) = &config.session_dir {
 		args.extend(["--session-dir".to_owned(), session_dir.clone()]);
 	}
 
 	LaunchSpec { program, args }
+}
+
+fn launch_spec(config: &RpcLaunchConfig) -> LaunchSpec {
+	command_spec(&default_executable(), config)
 }
 
 fn discover_workspace() -> PathBuf {
@@ -287,9 +296,8 @@ fn validate_outgoing_rpc_frame(frame: &str) -> Result<(), String> {
 #[tauri::command]
 pub fn get_runtime_info() -> DesktopRuntimeInfo {
 	DesktopRuntimeInfo {
-		available:          true,
-		default_workspace:  discover_workspace().to_string_lossy().into_owned(),
-		default_executable: default_executable(),
+		available:         true,
+		default_workspace: discover_workspace().to_string_lossy().into_owned(),
 	}
 }
 
@@ -463,23 +471,24 @@ mod tests {
 	use std::{fs, io::Cursor, process::Command};
 
 	use super::{
-		MAX_RPC_FRAME_BYTES, RpcLaunchConfig, first_existing_file, launch_spec,
+		MAX_RPC_FRAME_BYTES, RpcLaunchConfig, command_spec, first_existing_file,
 		read_bounded_rpc_line, terminate_child, validate_outgoing_rpc_frame,
 	};
 
-	fn config(executable: &str) -> RpcLaunchConfig {
+	fn config() -> RpcLaunchConfig {
 		RpcLaunchConfig {
-			cwd:         ".".to_owned(),
-			executable:  Some(executable.to_owned()),
-			provider:    None,
-			model:       None,
-			session_dir: None,
+			cwd:           ".".to_owned(),
+			provider:      None,
+			model:         None,
+			approval_mode: None,
+			thinking:      None,
+			session_dir:   None,
 		}
 	}
 
 	#[test]
 	fn compiled_cli_is_launched_directly() {
-		let spec = launch_spec(&config("omp"));
+		let spec = command_spec("omp", &config());
 
 		assert_eq!(spec.program, "omp");
 		assert_eq!(spec.args, ["--mode", "rpc-ui"]);
@@ -487,7 +496,7 @@ mod tests {
 
 	#[test]
 	fn source_cli_is_launched_through_bun() {
-		let spec = launch_spec(&config("C:/workspace/packages/coding-agent/src/cli.ts"));
+		let spec = command_spec("C:/workspace/packages/coding-agent/src/cli.ts", &config());
 
 		assert!(spec.program.ends_with("bun") || spec.program.ends_with("bun.exe"));
 		assert_eq!(spec.args, ["C:/workspace/packages/coding-agent/src/cli.ts", "--mode", "rpc-ui"]);
@@ -510,12 +519,22 @@ mod tests {
 
 	#[test]
 	fn model_options_are_forwarded_without_a_shell() {
-		let mut config = config("omp");
+		let mut config = config();
 		config.provider = Some("openai".to_owned());
 		config.model = Some("gpt-5".to_owned());
-		let spec = launch_spec(&config);
+		let spec = command_spec("omp", &config);
 
 		assert_eq!(spec.args, ["--mode", "rpc-ui", "--provider", "openai", "--model", "gpt-5"]);
+	}
+
+	#[test]
+	fn approval_mode_and_thinking_are_forwarded() {
+		let mut config = config();
+		config.approval_mode = Some("write".to_owned());
+		config.thinking = Some("high".to_owned());
+		let spec = command_spec("omp", &config);
+
+		assert_eq!(spec.args, ["--mode", "rpc-ui", "--approval-mode", "write", "--thinking", "high"]);
 	}
 
 	#[test]
