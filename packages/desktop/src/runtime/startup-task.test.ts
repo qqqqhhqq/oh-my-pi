@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { DesktopTask } from "../state/desktop-state";
-import { selectStartupTask, shouldAutoStartBackend, shouldCreateDefaultSession } from "./startup-task";
+import {
+	selectStartupTask,
+	shouldAutoConnectSelectedTask,
+	shouldAutoStartBackend,
+	shouldCreateDefaultSession,
+} from "./startup-task";
 
 function task(id: string, lastOpenedAt: number, archived = false): DesktopTask {
 	return {
@@ -54,5 +59,18 @@ describe("startup task selection", () => {
 		const recent = task("recent", 3);
 
 		expect(selectStartupTask([task("archived", 4, true), task("older", 2), recent], "archived")).toBe(recent);
+	});
+
+	test("auto-connects a selected persisted task only when native runtime is ready", () => {
+		const selected = task("selected", 1);
+
+		expect(shouldAutoConnectSelectedTask(true, selected, "disconnected")).toBe(true);
+		expect(shouldAutoConnectSelectedTask(true, selected, "error")).toBe(true);
+		expect(shouldAutoConnectSelectedTask(true, selected, "connecting")).toBe(false);
+		expect(shouldAutoConnectSelectedTask(true, selected, "connected")).toBe(false);
+		expect(shouldAutoConnectSelectedTask(true, selected, "preview")).toBe(false);
+		expect(shouldAutoConnectSelectedTask(false, selected, "disconnected")).toBe(false);
+		expect(shouldAutoConnectSelectedTask(true, task("archived", 2, true), "disconnected")).toBe(false);
+		expect(shouldAutoConnectSelectedTask(true, undefined, "disconnected")).toBe(false);
 	});
 });

@@ -22,6 +22,7 @@
 
 - Reused the OMP CLI status colors, semantic icons, model labels, and block-π identity in a clean Codex-style light desktop-native layout.
 - Added multi-platform CI coverage for the desktop frontend, native runtime, and PTY smoke contract.
+- Selecting a persisted task now restores its OMP RPC session automatically, with connecting status and a recoverable connection dialog when restore fails.
 
 ### Fixed
 

@@ -12,7 +12,12 @@ import { Workbench } from "../components/workbench/Workbench";
 import type { RpcLaunchConfig, RpcModelInfo } from "../rpc/rpc-session";
 import { useDesktopRpc } from "../rpc/use-desktop-rpc";
 import { openWorkspaceInEditor } from "../runtime/editor";
-import { selectStartupTask, shouldAutoStartBackend, shouldCreateDefaultSession } from "../runtime/startup-task";
+import {
+	selectStartupTask,
+	shouldAutoConnectSelectedTask,
+	shouldAutoStartBackend,
+	shouldCreateDefaultSession,
+} from "../runtime/startup-task";
 import { createDesktopStateFromCatalog, desktopReducer, initialDesktopState } from "../state/desktop-state";
 import { createDesktopProject, workspaceName } from "../state/project-factory";
 import { loadTaskCatalog, saveTaskCatalog, TASK_CATALOG_KEY } from "../state/task-catalog";
@@ -82,7 +87,7 @@ export function App() {
 		didAutoConnect.current = true;
 		const task = selectStartupTask(state.tasks, state.selectedTaskId);
 		if (task) {
-			void rpc.connect(task.id, task.launchConfig, task.sessionPath).catch(() => {});
+			void connect(task.id, task.launchConfig, Boolean(task.sessionPath), { reopenOnFailure: true });
 			return;
 		}
 		if (!shouldCreateDefaultSession(projects.length > 0)) return;
@@ -102,7 +107,7 @@ export function App() {
 			Date.now(),
 		);
 		dispatch({ type: "task.created", task: created });
-		void rpc.connect(created.id, created.launchConfig).catch(() => {});
+		void connect(created.id, created.launchConfig, false, { reopenOnFailure: true });
 	}, [catalogError, projects.length, rpc, state.selectedTaskId, state.tasks]);
 
 	const agents = selectedTask ? (state.agents[selectedTask.id] ?? []) : [];
@@ -126,7 +131,12 @@ export function App() {
 		: { status: "offline" as const, output: "", outputOffset: 0 };
 	const uiRequest = selectedTask ? rpc.uiRequests[selectedTask.id] : undefined;
 
-	async function connect(taskId: string, config: RpcLaunchConfig, restoreSession: boolean) {
+	async function connect(
+		taskId: string,
+		config: RpcLaunchConfig,
+		restoreSession: boolean,
+		options: { reopenOnFailure?: boolean } = {},
+	) {
 		setConnectionBusy(true);
 		setConnectionError(undefined);
 		try {
@@ -138,9 +148,17 @@ export function App() {
 			setConnectionOpen(false);
 		} catch (error) {
 			setConnectionError(error instanceof Error ? error.message : String(error));
+			if (options.reopenOnFailure) setConnectionOpen(true);
 		} finally {
 			setConnectionBusy(false);
 		}
+	}
+
+	function connectSelectedTask(taskId: string) {
+		const task = state.tasks.find(item => item.id === taskId);
+		const status = state.runtimes[taskId]?.status;
+		if (!shouldAutoConnectSelectedTask(rpc.runtimeInfo.available, task, status) || !task) return;
+		void connect(taskId, task.launchConfig, Boolean(task.sessionPath), { reopenOnFailure: true });
 	}
 
 	async function createTask(draft: SessionComposerDraft) {
@@ -308,6 +326,7 @@ export function App() {
 						setSessionComposerOpen(false);
 						setSessionComposerTaskId(undefined);
 						dispatch({ type: "task.selected", taskId, openedAt: Date.now() });
+						connectSelectedTask(taskId);
 					}}
 					onArchiveTask={(taskId, archived) => {
 						if (taskId === selectedTask?.id && archived) void rpc.disconnect(taskId);

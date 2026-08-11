@@ -1,4 +1,4 @@
-import type { DesktopTask } from "../state/desktop-state";
+import type { DesktopTask, RpcConnectionStatus } from "../state/desktop-state";
 
 interface BackendStartupState {
 	available: boolean;
@@ -12,6 +12,21 @@ export function shouldAutoStartBackend({ available, catalogError, hasStarted }: 
 
 export function shouldCreateDefaultSession(hasProjects: boolean): boolean {
 	return !hasProjects;
+}
+
+export function shouldAutoConnectSelectedTask(
+	available: boolean,
+	task: DesktopTask | undefined,
+	status: RpcConnectionStatus | undefined,
+): boolean {
+	return (
+		available &&
+		task !== undefined &&
+		!task.archived &&
+		status !== "preview" &&
+		status !== "connecting" &&
+		status !== "connected"
+	);
 }
 
 export function selectStartupTask(tasks: readonly DesktopTask[], selectedTaskId: string): DesktopTask | undefined {
