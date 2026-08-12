@@ -21,6 +21,7 @@ import type {
 import type { TodoPhase } from "../../tools/todo";
 import type { RpcGitSnapshot } from "./rpc-git";
 import type { RpcMessagesPage } from "./rpc-messages";
+import type { RpcJsonValue, RpcSettingItem, RpcSettingsSnapshot } from "./rpc-settings";
 
 // ============================================================================
 // RPC Commands (stdin)
@@ -40,6 +41,9 @@ export type RpcCommand =
 
 	// State
 	| { id?: string; type: "get_state" }
+	| { id?: string; type: "get_settings" }
+	| { id?: string; type: "set_setting"; path: string; value: RpcJsonValue }
+	| { id?: string; type: "reset_setting"; path: string }
 	| { id?: string; type: "set_fast_mode"; enabled: boolean }
 	| { id?: string; type: "get_available_commands" }
 	| { id?: string; type: "set_todos"; phases: TodoPhase[] }
@@ -220,6 +224,9 @@ export type RpcResponse =
 
 	// State
 	| { id?: string; type: "response"; command: "get_state"; success: true; data: RpcSessionState }
+	| { id?: string; type: "response"; command: "get_settings"; success: true; data: RpcSettingsSnapshot }
+	| { id?: string; type: "response"; command: "set_setting"; success: true; data: RpcSettingItem }
+	| { id?: string; type: "response"; command: "reset_setting"; success: true; data: RpcSettingItem }
 	| {
 			id?: string;
 			type: "response";

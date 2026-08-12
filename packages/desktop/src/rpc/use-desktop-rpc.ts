@@ -6,7 +6,11 @@ import {
 	DesktopRpcSession,
 	type RpcExtensionUiResponse,
 	type RpcInteractiveUiRequest,
+	type RpcJsonValue,
 	type RpcLaunchConfig,
+	type RpcLoginProvider,
+	type RpcSettingItem,
+	type RpcSettingsSnapshot,
 } from "./rpc-session";
 import { type DesktopRuntimeInfo, getDesktopRuntimeInfo, TauriRpcBridge } from "./tauri-rpc-bridge";
 
@@ -235,6 +239,36 @@ export function useDesktopRpc(dispatch: Dispatch<DesktopAction>) {
 		await session.refresh();
 	}
 
+	async function getSettings(taskId: string): Promise<RpcSettingsSnapshot> {
+		const session = sessions.current.get(taskId);
+		if (!session) throw new Error("Connect this task to OMP before loading settings");
+		return session.getSettings();
+	}
+
+	async function setSetting(taskId: string, path: string, value: RpcJsonValue): Promise<RpcSettingItem> {
+		const session = sessions.current.get(taskId);
+		if (!session) throw new Error("Connect this task to OMP before changing settings");
+		return session.setSetting(path, value);
+	}
+
+	async function resetSetting(taskId: string, path: string): Promise<RpcSettingItem> {
+		const session = sessions.current.get(taskId);
+		if (!session) throw new Error("Connect this task to OMP before resetting settings");
+		return session.resetSetting(path);
+	}
+
+	async function getLoginProviders(taskId: string): Promise<RpcLoginProvider[]> {
+		const session = sessions.current.get(taskId);
+		if (!session) throw new Error("Connect this task to OMP before loading provider accounts");
+		return session.getLoginProviders();
+	}
+
+	async function login(taskId: string, providerId: string): Promise<void> {
+		const session = sessions.current.get(taskId);
+		if (!session) throw new Error("Connect this task to OMP before signing in");
+		await session.login(providerId);
+	}
+
 	return {
 		runtimeInfo,
 		uiRequests,
@@ -254,5 +288,10 @@ export function useDesktopRpc(dispatch: Dispatch<DesktopAction>) {
 		getAvailableModels,
 		setModel,
 		setThinkingLevel,
+		getSettings,
+		setSetting,
+		resetSetting,
+		getLoginProviders,
+		login,
 	};
 }

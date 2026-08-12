@@ -9,6 +9,7 @@ describe("desktop application shell", () => {
 		expect(html).toContain("OMP Desktop");
 		expect(html).toContain('data-theme="light"');
 		expect(html).toContain('aria-label="Task navigation"');
+		expect(html).toContain('aria-label="Open settings"');
 		expect(html).toContain("Build the desktop task center");
 		expect(html).toContain("Implementing the desktop shell");
 		expect(html).toContain('role="tablist"');

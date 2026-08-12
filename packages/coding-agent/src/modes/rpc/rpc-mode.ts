@@ -40,6 +40,7 @@ import { MAX_RPC_FRAME_BYTES, MAX_RPC_REASSEMBLED_BYTES, RpcFrameEncoder } from 
 import { discardRpcGitChanges, getRpcGitDiff, getRpcGitSnapshot, stageRpcGitChanges } from "./rpc-git";
 import { claimRpcInput } from "./rpc-input";
 import { pageRpcMessages, RPC_MESSAGES_PAGE_BUSY_ERROR, RpcMessagesPageError } from "./rpc-messages";
+import { getRpcSettingsSnapshot, resetRpcSetting, setRpcSetting } from "./rpc-settings";
 import { RpcSubagentRegistry, readRpcSubagentTranscript } from "./rpc-subagents";
 import type {
 	RpcCommand,
@@ -1102,6 +1103,21 @@ export async function runRpcMode(
 					contextUsage: session.getContextUsage(),
 				};
 				return success(id, "get_state", state);
+			}
+
+			case "get_settings":
+				return success(id, "get_settings", getRpcSettingsSnapshot(session.settings));
+
+			case "set_setting": {
+				const setting = setRpcSetting(session.settings, command.path, command.value);
+				await session.settings.flush();
+				return success(id, "set_setting", setting);
+			}
+
+			case "reset_setting": {
+				const setting = resetRpcSetting(session.settings, command.path);
+				await session.settings.flush();
+				return success(id, "reset_setting", setting);
 			}
 
 			case "set_fast_mode": {

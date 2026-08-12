@@ -8,6 +8,7 @@ import {
 	PlugZap,
 	Plus,
 	Search,
+	Settings,
 	Star,
 	Unplug,
 } from "lucide-react";
@@ -29,6 +30,7 @@ interface TaskRailProps {
 	onToggleFavorite: (taskId: string, favorite: boolean) => void;
 	onConnect: () => void;
 	onDisconnect: () => void;
+	onOpenSettings: () => void;
 }
 
 const runtimeLabel: Record<DesktopTaskRuntime["status"], string> = {
@@ -67,6 +69,7 @@ export function TaskRail({
 	onToggleFavorite,
 	onConnect,
 	onDisconnect,
+	onOpenSettings,
 }: TaskRailProps) {
 	const [showArchived, setShowArchived] = useState(false);
 	const [canopyOpen, setCanopyOpen] = useState(true);
@@ -343,6 +346,15 @@ export function TaskRail({
 					) : null}
 				</div>
 				<div className="rail-footer-actions">
+					<button
+						className="icon-button"
+						type="button"
+						onClick={onOpenSettings}
+						aria-label="Open settings"
+						title="Settings"
+					>
+						<Settings size={15} aria-hidden="true" />
+					</button>
 					<button
 						className="icon-button"
 						type="button"

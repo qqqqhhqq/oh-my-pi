@@ -88,6 +88,12 @@ interface SessionComposerProps {
 	availableModels?: RpcModelInfo[];
 	onSelectModel?: (provider: string, modelId: string) => Promise<void>;
 	onSetThinking?: (level: SessionThinkingLevel) => Promise<void>;
+	defaults?: {
+		approvalMode?: SessionApprovalMode;
+		thinking?: SessionThinkingLevel;
+		provider?: string;
+		model?: string;
+	};
 	context?: {
 		model?: string;
 		percent: number;
@@ -107,6 +113,7 @@ export function SessionComposer({
 	availableModels = [],
 	onSelectModel,
 	onSetThinking,
+	defaults,
 	context,
 }: SessionComposerProps) {
 	const [projectId, setProjectId] = useState(
@@ -116,10 +123,10 @@ export function SessionComposer({
 	);
 	const [projectMenuOpen, setProjectMenuOpen] = useState(false);
 	const [runtimeMenuOpen, setRuntimeMenuOpen] = useState(false);
-	const [approvalMode, setApprovalMode] = useState<SessionApprovalMode>("write");
-	const [thinking, setThinking] = useState<SessionThinkingLevel>("auto");
-	const [selectedProvider, setSelectedProvider] = useState<string>();
-	const [selectedModel, setSelectedModel] = useState<string>();
+	const [approvalMode, setApprovalMode] = useState<SessionApprovalMode>(defaults?.approvalMode ?? "write");
+	const [thinking, setThinking] = useState<SessionThinkingLevel>(defaults?.thinking ?? "auto");
+	const [selectedProvider, setSelectedProvider] = useState<string | undefined>(defaults?.provider);
+	const [selectedModel, setSelectedModel] = useState<string | undefined>(defaults?.model);
 	const [prompt, setPrompt] = useState("");
 	const projectMenuRef = useRef<HTMLDivElement>(null);
 	const runtimeMenuRef = useRef<HTMLDivElement>(null);

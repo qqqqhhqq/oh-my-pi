@@ -307,6 +307,73 @@ describe("DesktopRpcSession", () => {
 		await expect(pending).resolves.toMatchObject({ success: true, command: "prompt" });
 	});
 
+	test("round-trips settings and provider-account commands through the RPC session", async () => {
+		const bridge = new FakeBridge();
+		const session = new DesktopRpcSession("task-1", bridge, () => {});
+		await session.connect({ cwd: "C:/workspace" });
+
+		const settingsPromise = session.getSettings();
+		const settingsCommand = JSON.parse(bridge.frames.at(-1) ?? "{}") as { id: string; type: string };
+		expect(settingsCommand.type).toBe("get_settings");
+		bridge.emit("task-1", {
+			id: settingsCommand.id,
+			type: "response",
+			command: "get_settings",
+			success: true,
+			data: {
+				cwd: "C:/workspace",
+				agentDir: "C:/Users/test/.omp",
+				tabs: [{ id: "model", label: "Model" }],
+				settings: [
+					{
+						path: "defaultThinkingLevel",
+						type: "enum",
+						tab: "model",
+						label: "Thinking Level",
+						description: "Reasoning depth",
+						value: "high",
+						defaultValue: "high",
+					},
+				],
+			},
+		});
+		expect(await settingsPromise).toMatchObject({
+			cwd: "C:/workspace",
+			settings: [{ path: "defaultThinkingLevel" }],
+		});
+
+		const updatePromise = session.setSetting("defaultThinkingLevel", "medium");
+		const updateCommand = JSON.parse(bridge.frames.at(-1) ?? "{}") as { id: string; type: string; path: string };
+		expect(updateCommand).toMatchObject({ type: "set_setting", path: "defaultThinkingLevel" });
+		bridge.emit("task-1", {
+			id: updateCommand.id,
+			type: "response",
+			command: "set_setting",
+			success: true,
+			data: {
+				path: "defaultThinkingLevel",
+				type: "enum",
+				tab: "model",
+				label: "Thinking Level",
+				description: "Reasoning depth",
+				value: "medium",
+			},
+		});
+		expect(await updatePromise).toMatchObject({ path: "defaultThinkingLevel", value: "medium" });
+
+		const providersPromise = session.getLoginProviders();
+		const providersCommand = JSON.parse(bridge.frames.at(-1) ?? "{}") as { id: string; type: string };
+		expect(providersCommand.type).toBe("get_login_providers");
+		bridge.emit("task-1", {
+			id: providersCommand.id,
+			type: "response",
+			command: "get_login_providers",
+			success: true,
+			data: { providers: [{ id: "openai", name: "OpenAI", available: true, authenticated: false }] },
+		});
+		expect(await providersPromise).toEqual([{ id: "openai", name: "OpenAI", available: true, authenticated: false }]);
+	});
+
 	test("can steer a prompt while the agent is streaming", async () => {
 		const bridge = new FakeBridge();
 		const session = new DesktopRpcSession("task-1", bridge, () => {});

@@ -22,10 +22,12 @@ describe("task rail actions", () => {
 				onToggleFavorite={() => {}}
 				onConnect={() => {}}
 				onDisconnect={() => {}}
+				onOpenSettings={() => {}}
 			/>,
 		);
 
 		expect(html).toContain('aria-label="Search tasks"');
+		expect(html).toContain('aria-label="Open settings"');
 		expect(html).not.toContain("Scheduled");
 		expect(html).not.toContain("Plugins");
 	});

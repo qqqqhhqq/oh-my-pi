@@ -5,11 +5,18 @@ import { ConversationPane } from "../components/conversation/ConversationPane";
 import { AppTitlebar } from "../components/runtime/AppTitlebar";
 import { ConnectionDialog } from "../components/runtime/ConnectionDialog";
 import { ExtensionRequestDialog } from "../components/runtime/ExtensionRequestDialog";
+import { SettingsDialog } from "../components/settings/SettingsDialog";
 import { SessionComposer, type SessionComposerDraft } from "../components/tasks/SessionComposer";
 import { TaskActionDialog } from "../components/tasks/TaskActionDialog";
 import { TaskRail } from "../components/tasks/TaskRail";
 import { Workbench } from "../components/workbench/Workbench";
-import type { RpcLaunchConfig, RpcModelInfo } from "../rpc/rpc-session";
+import type {
+	RpcJsonValue,
+	RpcLaunchConfig,
+	RpcLoginProvider,
+	RpcModelInfo,
+	RpcSettingsSnapshot,
+} from "../rpc/rpc-session";
 import { useDesktopRpc } from "../rpc/use-desktop-rpc";
 import { openWorkspaceInEditor } from "../runtime/editor";
 import {
@@ -18,6 +25,12 @@ import {
 	shouldAutoStartBackend,
 	shouldCreateDefaultSession,
 } from "../runtime/startup-task";
+import {
+	DEFAULT_DESKTOP_SETTINGS,
+	type DesktopSettings,
+	loadDesktopSettings,
+	saveDesktopSettings,
+} from "../state/desktop-settings";
 import { createDesktopStateFromCatalog, desktopReducer, initialDesktopState } from "../state/desktop-state";
 import { createDesktopProject, workspaceName } from "../state/project-factory";
 import { loadTaskCatalog, saveTaskCatalog, TASK_CATALOG_KEY } from "../state/task-catalog";
@@ -47,6 +60,10 @@ export function App() {
 	const [initialDesktop] = useState(loadInitialDesktop);
 	const [state, dispatch] = useReducer(desktopReducer, initialDesktop.state);
 	const [projects, setProjects] = useState(initialDesktop.projects);
+	const [desktopSettings, setDesktopSettings] = useState<DesktopSettings>(() =>
+		typeof window === "undefined" ? { ...DEFAULT_DESKTOP_SETTINGS } : loadDesktopSettings(window.localStorage),
+	);
+	const [systemTheme, setSystemTheme] = useState<"light" | "dark">("light");
 	const rpc = useDesktopRpc(dispatch);
 	const terminalController = useDesktopTerminal(dispatch);
 	const [catalogError, setCatalogError] = useState(initialDesktop.catalogError);
@@ -62,11 +79,26 @@ export function App() {
 	const [taskActionsOpen, setTaskActionsOpen] = useState(false);
 	const [taskActionBusy, setTaskActionBusy] = useState(false);
 	const [taskActionError, setTaskActionError] = useState<string>();
+	const [settingsOpen, setSettingsOpen] = useState(false);
+	const [backendSettings, setBackendSettings] = useState<RpcSettingsSnapshot>();
+	const [loginProviders, setLoginProviders] = useState<RpcLoginProvider[]>([]);
+	const [settingsLoading, setSettingsLoading] = useState(false);
+	const [settingsError, setSettingsError] = useState<string>();
 	const didAutoConnect = useRef(false);
 	const selectedTask = state.tasks.find(task => task.id === state.selectedTaskId);
 	const runtime = selectedTask
 		? (state.runtimes[selectedTask.id] ?? { status: "disconnected", stderr: [] })
 		: { status: "disconnected" as const, stderr: [] };
+	const resolvedTheme = desktopSettings.theme === "system" ? systemTheme : desktopSettings.theme;
+
+	useEffect(() => {
+		if (desktopSettings.theme !== "system" || typeof window === "undefined" || !window.matchMedia) return;
+		const media = window.matchMedia("(prefers-color-scheme: dark)");
+		const update = () => setSystemTheme(media.matches ? "dark" : "light");
+		update();
+		media.addEventListener?.("change", update);
+		return () => media.removeEventListener?.("change", update);
+	}, [desktopSettings.theme]);
 
 	useEffect(() => {
 		if (!isTauri() || typeof window === "undefined" || catalogError) return;
@@ -74,8 +106,14 @@ export function App() {
 	}, [catalogError, projects, state.tasks]);
 
 	useEffect(() => {
+		if (!isTauri() || typeof window === "undefined") return;
+		saveDesktopSettings(window.localStorage, desktopSettings);
+	}, [desktopSettings]);
+
+	useEffect(() => {
 		if (
 			!isTauri() ||
+			!desktopSettings.autoConnect ||
 			!shouldAutoStartBackend({
 				available: rpc.runtimeInfo.available,
 				catalogError,
@@ -102,13 +140,17 @@ export function App() {
 				projectId: project.id,
 				title: "",
 				cwd: project.cwd,
+				provider: desktopSettings.defaultProvider,
+				model: desktopSettings.defaultModel,
+				approvalMode: desktopSettings.defaultApprovalMode,
+				thinking: desktopSettings.defaultThinking,
 			},
 			globalThis.crypto.randomUUID(),
 			Date.now(),
 		);
 		dispatch({ type: "task.created", task: created });
 		void connect(created.id, created.launchConfig, false, { reopenOnFailure: true });
-	}, [catalogError, projects.length, rpc, state.selectedTaskId, state.tasks]);
+	}, [catalogError, desktopSettings, projects.length, rpc, state.selectedTaskId, state.tasks]);
 
 	const agents = selectedTask ? (state.agents[selectedTask.id] ?? []) : [];
 	const git = selectedTask ? (state.git[selectedTask.id] ?? { status: "idle" as const }) : { status: "idle" as const };
@@ -129,7 +171,11 @@ export function App() {
 	const terminal = selectedTask
 		? (state.terminals[selectedTask.id] ?? { status: "offline" as const, output: "", outputOffset: 0 })
 		: { status: "offline" as const, output: "", outputOffset: 0 };
-	const uiRequest = selectedTask ? rpc.uiRequests[selectedTask.id] : undefined;
+	const uiRequestTaskId =
+		selectedTask && rpc.uiRequests[selectedTask.id]
+			? selectedTask.id
+			: Object.entries(rpc.uiRequests).find(([, request]) => request !== undefined)?.[0];
+	const uiRequest = uiRequestTaskId ? rpc.uiRequests[uiRequestTaskId] : undefined;
 
 	async function connect(
 		taskId: string,
@@ -155,10 +201,65 @@ export function App() {
 	}
 
 	function connectSelectedTask(taskId: string) {
+		if (!desktopSettings.autoConnect) return;
 		const task = state.tasks.find(item => item.id === taskId);
 		const status = state.runtimes[taskId]?.status;
 		if (!shouldAutoConnectSelectedTask(rpc.runtimeInfo.available, task, status) || !task) return;
 		void connect(taskId, task.launchConfig, Boolean(task.sessionPath), { reopenOnFailure: true });
+	}
+
+	function connectedTaskId(): string | undefined {
+		if (selectedTask && state.runtimes[selectedTask.id]?.status === "connected") return selectedTask.id;
+		return state.tasks.find(task => state.runtimes[task.id]?.status === "connected")?.id;
+	}
+
+	async function refreshBackendSettings() {
+		const taskId = connectedTaskId();
+		if (!taskId) {
+			setBackendSettings(undefined);
+			setSettingsError("Connect an OMP task to load backend settings.");
+			return;
+		}
+		setSettingsLoading(true);
+		setSettingsError(undefined);
+		try {
+			const [snapshot, providers] = await Promise.all([rpc.getSettings(taskId), rpc.getLoginProviders(taskId)]);
+			setBackendSettings(snapshot);
+			setLoginProviders(providers);
+		} catch (error) {
+			setSettingsError(error instanceof Error ? error.message : String(error));
+		} finally {
+			setSettingsLoading(false);
+		}
+	}
+
+	async function setBackendSetting(path: string, value: RpcJsonValue) {
+		const taskId = connectedTaskId();
+		if (!taskId) throw new Error("Connect an OMP task before changing backend settings");
+		const updated = await rpc.setSetting(taskId, path, value);
+		setBackendSettings(current =>
+			current
+				? { ...current, settings: current.settings.map(item => (item.path === updated.path ? updated : item)) }
+				: current,
+		);
+	}
+
+	async function resetBackendSetting(path: string) {
+		const taskId = connectedTaskId();
+		if (!taskId) throw new Error("Connect an OMP task before resetting backend settings");
+		const updated = await rpc.resetSetting(taskId, path);
+		setBackendSettings(current =>
+			current
+				? { ...current, settings: current.settings.map(item => (item.path === updated.path ? updated : item)) }
+				: current,
+		);
+	}
+
+	async function loginProvider(providerId: string) {
+		const taskId = connectedTaskId();
+		if (!taskId) throw new Error("Connect an OMP task before signing in");
+		await rpc.login(taskId, providerId);
+		setLoginProviders(await rpc.getLoginProviders(taskId));
 	}
 
 	async function createTask(draft: SessionComposerDraft) {
@@ -174,10 +275,20 @@ export function App() {
 			: undefined;
 		const launchConfig: RpcLaunchConfig = {
 			cwd: project.cwd,
-			...(draft.provider ? { provider: draft.provider } : {}),
-			...(draft.model ? { model: draft.model } : {}),
-			...(draft.approvalMode ? { approvalMode: draft.approvalMode } : {}),
-			...(draft.thinking ? { thinking: draft.thinking } : {}),
+			...(draft.provider
+				? { provider: draft.provider }
+				: desktopSettings.defaultProvider
+					? { provider: desktopSettings.defaultProvider }
+					: {}),
+			...(draft.model
+				? { model: draft.model }
+				: desktopSettings.defaultModel
+					? { model: desktopSettings.defaultModel }
+					: {}),
+			...(draft.approvalMode
+				? { approvalMode: draft.approvalMode }
+				: { approvalMode: desktopSettings.defaultApprovalMode }),
+			...(draft.thinking ? { thinking: draft.thinking } : { thinking: desktopSettings.defaultThinking }),
 		};
 		const task =
 			existingTask ??
@@ -307,7 +418,7 @@ export function App() {
 	return (
 		<>
 			<AppTitlebar native={isTauri()} />
-			<main className="desktop-shell" data-theme="light">
+			<main className="desktop-shell" data-theme={resolvedTheme}>
 				<TaskRail
 					state={state}
 					projects={projects}
@@ -335,6 +446,10 @@ export function App() {
 					onToggleFavorite={(taskId, favorite) => dispatch({ type: "task.favorited", taskId, favorite })}
 					onConnect={() => setConnectionOpen(true)}
 					onDisconnect={() => selectedTask && void rpc.disconnect(selectedTask.id)}
+					onOpenSettings={() => {
+						setSettingsOpen(true);
+						void refreshBackendSettings();
+					}}
 				/>
 				{sessionComposerOpen ? (
 					<>
@@ -346,6 +461,12 @@ export function App() {
 							onCreate={createTask}
 							onOpenProject={() => void openProjectFolder()}
 							availableModels={availableModels}
+							defaults={{
+								provider: desktopSettings.defaultProvider,
+								model: desktopSettings.defaultModel,
+								approvalMode: desktopSettings.defaultApprovalMode,
+								thinking: desktopSettings.defaultThinking,
+							}}
 							context={
 								selectedTask
 									? {
@@ -478,12 +599,27 @@ export function App() {
 						onDelete={deleteSelected}
 					/>
 				)}
-				{selectedTask && uiRequest && (
+				{uiRequestTaskId && uiRequest && (
 					<ExtensionRequestDialog
 						request={uiRequest}
-						onResponse={response => rpc.respondToUi(selectedTask.id, response)}
+						onResponse={response => rpc.respondToUi(uiRequestTaskId, response)}
 					/>
 				)}
+				<SettingsDialog
+					open={settingsOpen}
+					runtimeStatus={runtime.status}
+					desktopSettings={desktopSettings}
+					snapshot={backendSettings}
+					loading={settingsLoading}
+					error={settingsError}
+					onClose={() => setSettingsOpen(false)}
+					onRefresh={() => void refreshBackendSettings()}
+					onDesktopSettingsChange={setDesktopSettings}
+					onSetBackendSetting={setBackendSetting}
+					onResetBackendSetting={resetBackendSetting}
+					loginProviders={loginProviders}
+					onLogin={loginProvider}
+				/>
 			</main>
 		</>
 	);

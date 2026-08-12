@@ -5,6 +5,7 @@
 ### Added
 
 - Added repository-root-aware Git snapshot, diff, stage, and guarded discard commands for RPC UI hosts.
+- Added schema-driven RPC settings read, write, reset, and provider-account commands for Desktop clients.
 
 ### Fixed
 

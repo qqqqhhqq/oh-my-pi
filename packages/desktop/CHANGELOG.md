@@ -17,12 +17,14 @@
 - The new-task composer has no cancel/back affordance: opening New chat or a project's quick-new button shows the composer, clicking any session in the rail switches straight to that conversation, and sending a prompt auto-advances into the created session.
 - Added live context usage and cost estimates below the composer and in the conversation header (tokens/window, percent, and an estimated input price from the live model rate).
 - Opening a local folder now jumps straight to the native OS folder picker (`tauri-plugin-dialog`): the selected path registers as a project with the folder name as its title and is adopted as the composer's context, with no intermediate form.
+- Added a Codex-style Settings center with persisted Desktop defaults, theme selection, backend schema-driven configuration, credential redaction, and OMP provider sign-in actions.
 
 ### Changed
 
 - Reused the OMP CLI status colors, semantic icons, model labels, and block-π identity in a clean Codex-style light desktop-native layout.
 - Added multi-platform CI coverage for the desktop frontend, native runtime, and PTY smoke contract.
 - Selecting a persisted task now restores its OMP RPC session automatically, with connecting status and a recoverable connection dialog when restore fails.
+- Settings changes now flow through the OMP RPC and are flushed by the backend, while new tasks inherit the configured Desktop defaults.
 
 ### Fixed
 

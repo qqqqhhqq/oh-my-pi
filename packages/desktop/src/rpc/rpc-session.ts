@@ -20,6 +20,11 @@ export type RpcCommand =
 	| { type: "abort_and_prompt"; message: string }
 	| { type: "bash"; command: string }
 	| { type: "get_state" }
+	| { type: "get_settings" }
+	| { type: "set_setting"; path: string; value: RpcJsonValue }
+	| { type: "reset_setting"; path: string }
+	| { type: "get_login_providers" }
+	| { type: "login"; providerId: string }
 	| { type: "get_messages" }
 	| { type: "switch_session"; sessionPath: string }
 	| { type: "set_subagent_subscription"; level: "off" | "progress" | "events" }
@@ -56,6 +61,49 @@ export interface RpcModelInfo {
 	contextWindow: number | null;
 	reasoning: boolean;
 	thinking?: { mode: string; efforts?: string[] } | null;
+}
+
+export type RpcJsonValue = null | boolean | number | string | RpcJsonValue[] | { [key: string]: RpcJsonValue };
+
+export type RpcSettingType = "boolean" | "enum" | "number" | "string" | "array" | "record";
+
+export interface RpcSettingOption {
+	value: string;
+	label: string;
+	description?: string;
+}
+
+export interface RpcSettingItem {
+	path: string;
+	type: RpcSettingType;
+	tab: string;
+	group?: string;
+	label: string;
+	description: string;
+	value?: RpcJsonValue;
+	defaultValue?: RpcJsonValue;
+	redacted?: boolean;
+	options?: RpcSettingOption[];
+	ordered?: boolean;
+}
+
+export interface RpcSettingTab {
+	id: string;
+	label: string;
+}
+
+export interface RpcSettingsSnapshot {
+	cwd: string;
+	agentDir: string;
+	tabs: RpcSettingTab[];
+	settings: RpcSettingItem[];
+}
+
+export interface RpcLoginProvider {
+	id: string;
+	name: string;
+	available: boolean;
+	authenticated: boolean;
 }
 
 export type RpcResponse =
@@ -258,6 +306,89 @@ function sessionState(value: unknown): RpcSessionState | undefined {
 
 function stringArray(value: unknown): string[] | undefined {
 	return Array.isArray(value) && value.every(item => typeof item === "string") ? value : undefined;
+}
+
+function isRpcJsonValue(value: unknown): value is RpcJsonValue {
+	if (value === null || typeof value === "boolean" || typeof value === "string") return true;
+	if (typeof value === "number") return Number.isFinite(value);
+	if (Array.isArray(value)) return value.every(isRpcJsonValue);
+	if (!isRecord(value)) return false;
+	return Object.values(value).every(isRpcJsonValue);
+}
+
+function settingType(value: unknown): RpcSettingType | undefined {
+	return value === "boolean" ||
+		value === "enum" ||
+		value === "number" ||
+		value === "string" ||
+		value === "array" ||
+		value === "record"
+		? value
+		: undefined;
+}
+
+function rpcSettingOption(value: unknown): RpcSettingOption | undefined {
+	if (!isRecord(value) || typeof value.value !== "string" || typeof value.label !== "string") return undefined;
+	return {
+		value: value.value,
+		label: value.label,
+		...(typeof value.description === "string" ? { description: value.description } : {}),
+	};
+}
+
+function rpcSettingItem(value: unknown): RpcSettingItem | undefined {
+	if (
+		!isRecord(value) ||
+		typeof value.path !== "string" ||
+		!settingType(value.type) ||
+		typeof value.tab !== "string" ||
+		typeof value.label !== "string" ||
+		typeof value.description !== "string"
+	) {
+		return undefined;
+	}
+	const options = value.options === undefined ? undefined : value.options;
+	if (options !== undefined && (!Array.isArray(options) || options.map(rpcSettingOption).some(option => !option))) {
+		return undefined;
+	}
+	if (value.value !== undefined && !isRpcJsonValue(value.value)) return undefined;
+	if (value.defaultValue !== undefined && !isRpcJsonValue(value.defaultValue)) return undefined;
+	if (value.redacted !== undefined && typeof value.redacted !== "boolean") return undefined;
+	if (value.ordered !== undefined && typeof value.ordered !== "boolean") return undefined;
+	return {
+		path: value.path,
+		type: settingType(value.type)!,
+		tab: value.tab,
+		...(typeof value.group === "string" ? { group: value.group } : {}),
+		label: value.label,
+		description: value.description,
+		...(value.value === undefined ? {} : { value: value.value }),
+		...(value.defaultValue === undefined ? {} : { defaultValue: value.defaultValue }),
+		...(value.redacted === undefined ? {} : { redacted: value.redacted }),
+		...(options === undefined ? {} : { options: options.map(option => rpcSettingOption(option)!) }),
+		...(value.ordered === undefined ? {} : { ordered: value.ordered }),
+	};
+}
+
+function rpcSettingsSnapshot(value: unknown): RpcSettingsSnapshot {
+	if (
+		!isRecord(value) ||
+		typeof value.cwd !== "string" ||
+		typeof value.agentDir !== "string" ||
+		!Array.isArray(value.tabs) ||
+		!Array.isArray(value.settings)
+	) {
+		throw new Error("OMP returned an invalid settings snapshot");
+	}
+	const tabs = value.tabs.map(tab => {
+		if (!isRecord(tab) || typeof tab.id !== "string" || typeof tab.label !== "string") {
+			throw new Error("OMP returned an invalid settings tab");
+		}
+		return { id: tab.id, label: tab.label };
+	});
+	const settings = value.settings.map(rpcSettingItem);
+	if (settings.some(item => item === undefined)) throw new Error("OMP returned an invalid setting definition");
+	return { cwd: value.cwd, agentDir: value.agentDir, tabs, settings: settings as RpcSettingItem[] };
 }
 
 const gitChangeKinds = new Set<RpcGitChangeKind>([
@@ -527,6 +658,67 @@ export class DesktopRpcSession {
 
 	async setThinkingLevel(level: string): Promise<void> {
 		const response = await this.command({ type: "set_thinking_level", level });
+		if (!response.success) throw new Error(response.error);
+	}
+
+	async getSettings(): Promise<RpcSettingsSnapshot> {
+		const response = await this.command({ type: "get_settings" });
+		if (!response.success) throw new Error(response.error);
+		if (response.command !== "get_settings") throw new Error("OMP returned an invalid settings response");
+		return rpcSettingsSnapshot(response.data);
+	}
+
+	async setSetting(path: string, value: RpcJsonValue): Promise<RpcSettingItem> {
+		const response = await this.command({ type: "set_setting", path, value });
+		if (!response.success) throw new Error(response.error);
+		if (response.command !== "set_setting") throw new Error("OMP returned an invalid setting response");
+		const setting = rpcSettingItem(response.data);
+		if (!setting) throw new Error("OMP returned an invalid setting value");
+		return setting;
+	}
+
+	async resetSetting(path: string): Promise<RpcSettingItem> {
+		const response = await this.command({ type: "reset_setting", path });
+		if (!response.success) throw new Error(response.error);
+		if (response.command !== "reset_setting") throw new Error("OMP returned an invalid setting response");
+		const setting = rpcSettingItem(response.data);
+		if (!setting) throw new Error("OMP returned an invalid setting value");
+		return setting;
+	}
+
+	async getLoginProviders(): Promise<RpcLoginProvider[]> {
+		const response = await this.command({ type: "get_login_providers" });
+		if (!response.success) throw new Error(response.error);
+		if (
+			response.command !== "get_login_providers" ||
+			!isRecord(response.data) ||
+			!Array.isArray(response.data.providers)
+		) {
+			throw new Error("OMP returned an invalid login provider list");
+		}
+		return response.data.providers.flatMap(provider => {
+			if (
+				!isRecord(provider) ||
+				typeof provider.id !== "string" ||
+				typeof provider.name !== "string" ||
+				typeof provider.available !== "boolean" ||
+				typeof provider.authenticated !== "boolean"
+			) {
+				return [];
+			}
+			return [
+				{
+					id: provider.id,
+					name: provider.name,
+					available: provider.available,
+					authenticated: provider.authenticated,
+				},
+			];
+		});
+	}
+
+	async login(providerId: string): Promise<void> {
+		const response = await this.command({ type: "login", providerId });
 		if (!response.success) throw new Error(response.error);
 	}
 
